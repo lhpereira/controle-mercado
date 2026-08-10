@@ -12,9 +12,9 @@
     <div><strong>{{ receipt.purchased_at[:16].replace('T',' ') if receipt.purchased_at else 'Data pendente' }}</strong><small>{{ receipt.payment_method or 'Pagamento não informado' }}</small></div>
     <div><strong>{{ receipt.item_rows }} linhas</strong><small>{{ receipt.reported_item_count or '—' }} itens no cupom</small></div>
     <div class="num"><strong>R$ {{ '%.2f'|format(receipt.total_paid or 0)|replace('.', ',') }}</strong><small>R$ {{ '%.2f'|format(receipt.discount_total or 0)|replace('.', ',') }} desconto</small></div>
-    <div><span class="badge {{ receipt.status }}">{{ 'Confirmado' if receipt.status == 'confirmed' else 'Rascunho' }}</span><small>{{ receipt.source_type }}</small></div>
+    <div><span class="badge {{ receipt.status }}">{{ {'confirmed':'Confirmado','draft':'Rascunho','queued':'Na fila','processing':'Processando','failed':'Falhou'}.get(receipt.status, receipt.status) }}</span><small>{{ receipt.source_type }}</small></div>
     <div class="inline-actions">
-      <a class="button secondary" href="{{ url_for('main.review_receipt', receipt_id=receipt.id) }}">Abrir</a>
+      <a class="button secondary" href="{{ url_for('main.processing_receipt' if receipt.status in ['queued','processing','failed'] else 'main.review_receipt', receipt_id=receipt.id) }}">Abrir</a>
       <form method="post" action="{{ url_for('main.delete_receipt', receipt_id=receipt.id) }}" onsubmit="return confirm('Remover este cupom e todos os itens?')"><button class="button danger">Excluir</button></form>
     </div>
   </article>
@@ -23,4 +23,3 @@
 {% endfor %}
 </section>
 {% endblock %}
-

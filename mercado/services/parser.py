@@ -19,6 +19,16 @@ ITEM_RE = re.compile(
     re.IGNORECASE,
 )
 
+STRUCTURED_MONEY_RE = re.compile(r"\d{1,6}[,.]\d{2}")
+STRUCTURED_UNIT_RE = re.compile(
+    rf"(?P<quantity>\d+(?:[.,]\d{{1,3}})?)\s*"
+    rf"(?P<unit>{UNITS}|UH|UM|0N|ON|K6)\b",
+    re.IGNORECASE,
+)
+NUMERIC_OCR_TRANSLATION = str.maketrans(
+    {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8"}
+)
+
 
 def decimal_br(value: str | int | float | None) -> Decimal:
     if value is None or value == "":
@@ -49,6 +59,14 @@ def parse_datetime(text: str) -> str | None:
         r"(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)", text
     )
     if not match:
+        noisy = re.search(
+            r"\b(\d{2})7(\d{2})7(\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)", text
+        )
+        if noisy:
+            clock = noisy.group(4)
+            match_value = f"{noisy.group(1)}/{noisy.group(2)}/{noisy.group(3)} {clock if clock.count(':') == 2 else clock + ':00'}"
+            return datetime.strptime(match_value, "%d/%m/%Y %H:%M:%S").isoformat()
+    if not match:
         date_only = re.search(r"(\d{2}/\d{2}/\d{4})", text)
         if not date_only:
             return None
@@ -62,6 +80,8 @@ def parse_datetime(text: str) -> str | None:
 def extract_fiscal_url(text: str) -> str | None:
     for line in text.splitlines():
         compact = re.sub(r"\s+", "", line)
+        compact = re.sub(r"\.gnv\.br", ".gov.br", compact, flags=re.IGNORECASE)
+        compact = re.sub(r"dfe\.ns\.gov\.br", "dfe.ms.gov.br", compact, flags=re.IGNORECASE)
         match = re.search(
             r"((?:https?://)?(?:www\.)?[a-z0-9.-]+\.gov\.br/[a-z0-9_/?=&.%+-]+)",
             compact,
@@ -92,7 +112,7 @@ def parse_summary(lines: list[str], text: str) -> dict:
     for index, line in enumerate(lines[:12]):
         if "CNPJ" in normalized(line).upper():
             after = re.sub(r".*?[\d./-]{14,18}\s*", "", line).strip(" :-")
-            merchant_name = after or None
+            merchant_name = _clean_ocr_description(after) or None
             if index + 1 < len(lines):
                 merchant_address = lines[index + 1].strip() or None
             break
@@ -113,11 +133,11 @@ def parse_summary(lines: list[str], text: str) -> dict:
         rf"Desconto\s*[:.]?\s*(?:R\$)?\s*({MONEY})", summary_text
     )
     total = first_match(
-        rf"(?:Valor\s+total|Total\s+a\s+pagar)\s*[:.]?\s*(?:R\$)?\s*({MONEY})",
+        rf"(?:[VU]alor\s+total|Total\s+a\s+pagar)\s*[:.]?\s*(?:R[$s])?\s*({MONEY})",
         summary_text,
     )
     payment = first_match(
-        r"Forma\s+de\s+pagamento\s+([^:\n]+)", summary_text
+        r"For[mn]a\s+de\s+pagamento\s+([^:\n]+)", summary_text
     )
 
     return {
@@ -187,6 +207,116 @@ def parse_items(lines: list[str]) -> list[dict]:
         )
         pending = ""
     return items
+
+
+def _clean_ocr_description(value: str) -> str:
+    """Corrige confusões seguras somente dentro de palavras do produto."""
+
+    words = []
+    for word in value.strip(" -").split():
+        if word.startswith("0UE"):
+            word = "QUE" + word[3:]
+        if word and word[0].isalpha() and sum(char.isalpha() for char in word) >= 2:
+            word = word.replace("0", "O").replace("1", "I")
+        words.append(word)
+    return " ".join(words)
+
+
+def _ean13_is_valid(value: str) -> bool:
+    if len(value) != 13 or not value.isdigit():
+        return False
+    expected = (10 - sum((1 if index % 2 == 0 else 3) * int(digit) for index, digit in enumerate(value[:12])) % 10) % 10
+    return int(value[-1]) == expected
+
+
+def parse_structured_item(text: str, line_number: int, ocr_confidence: float = 0.0) -> dict | None:
+    """Lê uma linha já recortada do bloco fixo #/Cod/Descrição/Qt/Un/Vlr/Total.
+
+    O número da linha vem da posição geométrica, pois é justamente um dos campos
+    que mais sofre com confusões entre 0/D/O e 1/I no papel térmico.
+    """
+
+    line = " ".join(normalized(text).upper().replace("|", " ").split())
+    money_matches = list(STRUCTURED_MONEY_RE.finditer(line))
+    if len(money_matches) < 2:
+        return None
+    unit_price_match, total_match = money_matches[-2:]
+
+    before_prices = line[: unit_price_match.start()]
+    quantity_matches = list(STRUCTURED_UNIT_RE.finditer(before_prices))
+    if not quantity_matches:
+        return None
+    quantity_match = quantity_matches[-1]
+
+    prefix = before_prices[: quantity_match.start()]
+    first_token = re.match(r"^\s*(?P<value>[\dODQILZSB]+)", prefix)
+    if not first_token:
+        return None
+    first_digits = re.sub(r"\D", "", first_token.group("value").translate(NUMERIC_OCR_TRANSLATION))
+    padded_number = f"{line_number:02d}"
+    line_variants = (padded_number, str(line_number))
+    if first_digits in line_variants:
+        second_token = re.match(r"\s*(?P<value>[\dODQILZSB]{4,16})", prefix[first_token.end() :])
+        if not second_token:
+            return None
+        digits = re.sub(r"\D", "", second_token.group("value").translate(NUMERIC_OCR_TRANSLATION))
+        description_start = first_token.end() + second_token.end()
+    else:
+        digits = first_digits
+        if digits.startswith(padded_number):
+            digits = digits[len(padded_number) :]
+        elif digits.startswith(str(line_number)):
+            digits = digits[len(str(line_number)) :]
+        description_start = first_token.end()
+    if len(digits) > 13:
+        valid_candidates = [part for part in (digits[:13], digits[-13:]) if _ean13_is_valid(part)]
+        if valid_candidates:
+            digits = valid_candidates[0]
+    if not 3 <= len(digits) <= 14:
+        return None
+
+    description = _clean_ocr_description(prefix[description_start:])
+    if not description:
+        return None
+
+    quantity = decimal_br(quantity_match.group("quantity"))
+    unit_price = decimal_br(unit_price_match.group(0))
+    item_total = decimal_br(total_match.group(0))
+    unit = quantity_match.group("unit").upper()
+    unit = {"UH": "UN", "UM": "UN", "0N": "UN", "ON": "UN", "K6": "KG"}.get(unit, unit)
+    quantity_text = re.sub(r"\D", "", quantity_match.group("quantity"))
+    if (
+        unit == "UN"
+        and item_total == unit_price
+        and quantity != 1
+        and quantity_text.endswith("1")
+        and len(quantity_text) > 1
+    ):
+        description = _clean_ocr_description(f"{description} {quantity_text[:-1]}")
+        quantity = Decimal("1")
+    expected = quantity * unit_price
+    discount = max(Decimal("0"), expected - item_total)
+    difference = abs(expected - item_total)
+    confidence = min(0.99, 0.65 + (max(0.0, min(1.0, ocr_confidence)) * 0.34))
+    if difference > Decimal("0.06") and unit != "KG":
+        confidence = min(confidence, 0.72)
+    if any(word[0].isalpha() and any(char.isdigit() for char in word) for word in description.split()):
+        confidence = max(0.0, confidence - 0.25)
+
+    return {
+        "line_number": line_number,
+        "item_code": digits,
+        "description": description,
+        "quantity": float(quantity),
+        "unit": unit,
+        "unit_price": float(unit_price),
+        "gross_total": float(expected),
+        "discount": float(discount),
+        "item_total": float(item_total),
+        "category": infer_category(description),
+        "confidence": round(confidence, 3),
+        "ocr_text": text,
+    }
 
 
 def parse_receipt_text(text: str) -> dict:

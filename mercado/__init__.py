@@ -19,6 +19,22 @@ def create_app(test_config: dict | None = None) -> Flask:
         UPLOAD_FOLDER=str(data_dir / "uploads"),
         MAX_CONTENT_LENGTH=int(os.getenv("MAX_UPLOAD_MB", "15")) * 1024 * 1024,
         TESSERACT_LANG=os.getenv("TESSERACT_LANG", "por"),
+        OCR_PROVIDER=os.getenv("OCR_PROVIDER", "hybrid").lower(),
+        OCR_CONFIDENCE_THRESHOLD=float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.75")),
+        LLM_PROVIDER=os.getenv("LLM_PROVIDER", "openai").lower(),
+        LLM_TIMEOUT_SECONDS=int(os.getenv("LLM_TIMEOUT_SECONDS", "300")),
+        LLM_IMAGE_DETAIL=os.getenv("LLM_IMAGE_DETAIL", "high"),
+        OPENAI_API_KEY=os.getenv("OPENAI_API_KEY", ""),
+        OPENAI_MODEL=os.getenv("OPENAI_MODEL", "gpt-5.6-terra"),
+        OPENAI_BASE_URL=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        OLLAMA_BASE_URL=os.getenv(
+            "OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1"
+        ),
+        OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "qwen3-vl:8b"),
+        OLLAMA_API_KEY=os.getenv("OLLAMA_API_KEY", "ollama"),
+        WORKER_POLL_SECONDS=float(os.getenv("WORKER_POLL_SECONDS", "1")),
+        PROCESSING_STALE_MINUTES=int(os.getenv("PROCESSING_STALE_MINUTES", "20")),
+        SKIP_SEED=False,
         NFC_FETCH_ENABLED=os.getenv("NFC_FETCH_ENABLED", "false").lower() == "true",
         NFC_ALLOWED_HOSTS=[
             value.strip().lower()
@@ -39,7 +55,8 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     with app.app_context():
         init_db()
-        seed_path = Path(app.root_path).parent / "data" / "seed_compras.json"
-        seed_legacy_data(get_db(), seed_path)
+        if not app.config.get("SKIP_SEED"):
+            seed_path = Path(app.root_path).parent / "data" / "seed_compras.json"
+            seed_legacy_data(get_db(), seed_path)
 
     return app

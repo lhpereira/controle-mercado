@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS receipts (
     total_paid NUMERIC NOT NULL DEFAULT 0,
     payment_method TEXT,
     raw_text TEXT,
+    ocr_method TEXT,
+    ocr_warnings TEXT,
+    submission_id TEXT,
+    ocr_mode TEXT,
+    processing_started_at TEXT,
+    processing_error TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -26,6 +32,7 @@ CREATE TABLE IF NOT EXISTS receipts (
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     barcode TEXT,
+    merchant_cnpj TEXT NOT NULL DEFAULT '',
     canonical_name TEXT NOT NULL,
     brand TEXT,
     category TEXT,
@@ -37,9 +44,6 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode
-ON products(barcode) WHERE barcode IS NOT NULL AND barcode <> '';
 
 CREATE TABLE IF NOT EXISTS receipt_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +60,8 @@ CREATE TABLE IF NOT EXISTS receipt_items (
     item_total NUMERIC NOT NULL DEFAULT 0,
     category_snapshot TEXT,
     confidence NUMERIC,
+    extraction_source TEXT NOT NULL DEFAULT 'manual',
+    uncertain_fields TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -63,4 +69,3 @@ CREATE INDEX IF NOT EXISTS idx_items_receipt ON receipt_items(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_items_product ON receipt_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_purchased_at ON receipts(purchased_at);
 CREATE INDEX IF NOT EXISTS idx_receipts_cnpj ON receipts(merchant_cnpj);
-

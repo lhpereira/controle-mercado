@@ -33,9 +33,17 @@
       </section>
       <section class="card" style="margin-top:15px">
         <div class="card-head"><div><h2>Itens</h2><div class="subtitle">Corrija descrições, valores, descontos e categorias</div></div><button type="button" class="button secondary" id="addRow">+ Adicionar item</button></div>
-        <div class="item-editor"><table class="item-table"><thead><tr><th>Código</th><th>Descrição</th><th>Qtd.</th><th>Un.</th><th>Unitário</th><th>Bruto</th><th>Desconto</th><th>Total</th><th>Categoria</th><th></th></tr></thead><tbody id="itemsBody">
+        {% if ocr_warnings %}
+        <div class="note" style="margin-bottom:12px"><strong>Avisos da leitura:</strong><ul>{% for warning in ocr_warnings %}<li>{{ warning }}</li>{% endfor %}</ul></div>
+        {% endif %}
+        <div class="note" style="margin-bottom:12px">
+          Leitura {{ receipt.ocr_method or 'manual' }}: {{ ocr_stats.rows }} de {{ ocr_stats.expected or '?' }} linhas criadas.
+          {% if ocr_stats.low_confidence %}{{ ocr_stats.low_confidence }} linha(s) foram marcadas para conferência cuidadosa.{% else %}A estrutura e os valores de todas as linhas foram reconhecidos com boa confiança.{% endif %}
+        </div>
+        <div class="item-editor"><table class="item-table"><thead><tr><th>#</th><th>Cod</th><th>Descrição</th><th>Qt</th><th>Un</th><th>Vlr</th><th>Bruto</th><th>Desconto</th><th>Total</th><th>Categoria</th><th>Origem</th><th></th></tr></thead><tbody id="itemsBody">
           {% for item in items %}
           <tr>
+            <td>{{ item.line_number or loop.index }}</td>
             <td><input name="item_code[]" value="{{ item.item_code or '' }}"></td>
             <td><input class="description" name="description[]" value="{{ item.description }}"></td>
             <td><input class="calc qty" name="quantity[]" value="{{ item.quantity }}"></td>
@@ -45,6 +53,7 @@
             <td><input class="calc discount" name="discount[]" value="{{ item.discount }}"></td>
             <td><input class="calc item-total" name="item_total[]" value="{{ item.item_total }}"></td>
             <td><select class="category" name="category[]">{% for category in categories %}<option {% if item.category_snapshot == category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></td>
+            <td><small>{{ item.extraction_source or '—' }}{% if item.confidence is not none %}<br>{{ (item.confidence * 100)|round|int }}%{% endif %}</small></td>
             <td><button class="remove-row" type="button">×</button></td>
           </tr>
           {% endfor %}
@@ -60,8 +69,7 @@
   </div>
 </form>
 <template id="rowTemplate">
-  <tr><td><input name="item_code[]"></td><td><input class="description" name="description[]"></td><td><input class="calc qty" name="quantity[]" value="1"></td><td><select name="unit[]">{% for unit in ['UN','KG','PT','CX','PC','PCT','FD','LT','L','G','ML'] %}<option>{{ unit }}</option>{% endfor %}</select></td><td><input class="calc unit-price" name="unit_price[]" value="0"></td><td><input class="calc gross" name="gross_total[]" value="0"></td><td><input class="calc discount" name="discount[]" value="0"></td><td><input class="calc item-total" name="item_total[]" value="0"></td><td><select class="category" name="category[]">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></td><td><button class="remove-row" type="button">×</button></td></tr>
+  <tr><td>+</td><td><input name="item_code[]"></td><td><input class="description" name="description[]"></td><td><input class="calc qty" name="quantity[]" value="1"></td><td><select name="unit[]">{% for unit in ['UN','KG','PT','CX','PC','PCT','FD','LT','L','G','ML'] %}<option>{{ unit }}</option>{% endfor %}</select></td><td><input class="calc unit-price" name="unit_price[]" value="0"></td><td><input class="calc gross" name="gross_total[]" value="0"></td><td><input class="calc discount" name="discount[]" value="0"></td><td><input class="calc item-total" name="item_total[]" value="0"></td><td><select class="category" name="category[]">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></td><td><small>manual</small></td><td><button class="remove-row" type="button">×</button></td></tr>
 </template>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='review.js') }}"></script>{% endblock %}
-

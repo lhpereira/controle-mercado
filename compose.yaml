@@ -1,15 +1,38 @@
+x-app-environment: &app-environment
+  SECRET_KEY: ${SECRET_KEY:-troque-esta-chave-em-producao}
+  APP_DATA_DIR: /data
+  MAX_UPLOAD_MB: 15
+  TESSERACT_LANG: por
+  OCR_PROVIDER: ${OCR_PROVIDER:-hybrid}
+  OCR_CONFIDENCE_THRESHOLD: ${OCR_CONFIDENCE_THRESHOLD:-0.75}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-300}
+  LLM_IMAGE_DETAIL: ${LLM_IMAGE_DETAIL:-high}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-terra}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3-vl:8b}
+  OLLAMA_API_KEY: ${OLLAMA_API_KEY:-ollama}
+  WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-1}
+  PROCESSING_STALE_MINUTES: ${PROCESSING_STALE_MINUTES:-20}
+  NFC_FETCH_ENABLED: ${NFC_FETCH_ENABLED:-false}
+  NFC_ALLOWED_HOSTS: ${NFC_ALLOWED_HOSTS:-dfe.ms.gov.br,sefaz.ms.gov.br,nfce.sefaz.ms.gov.br}
+
 services:
   app:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      SECRET_KEY: ${SECRET_KEY:-troque-esta-chave-em-producao}
-      APP_DATA_DIR: /data
-      MAX_UPLOAD_MB: 15
-      TESSERACT_LANG: por
-      NFC_FETCH_ENABLED: ${NFC_FETCH_ENABLED:-false}
-      NFC_ALLOWED_HOSTS: ${NFC_ALLOWED_HOSTS:-dfe.ms.gov.br,sefaz.ms.gov.br,nfce.sefaz.ms.gov.br}
+    environment: *app-environment
+    volumes:
+      - mercado_data:/data
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "-m", "mercado.worker"]
+    environment: *app-environment
     volumes:
       - mercado_data:/data
     restart: unless-stopped

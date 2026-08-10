@@ -10,6 +10,7 @@ from flask import (
     current_app,
     flash,
     jsonify,
+    make_response,
     redirect,
     render_template,
     request,
@@ -22,8 +23,12 @@ from .categories import CATEGORIES, infer_category
 from .db import get_db
 from .services.analytics import analytics_rows, filter_options
 from .services.nfce import UnsafeReceiptURL, fetch_nfce
-from .services.ocr import process_image
 from .services.parser import decimal_br
+from .services.receipt_jobs import (
+    enqueue_image_receipt,
+    remove_orphan_upload,
+    retry_receipt,
+)
 from .services.seed import seed_legacy_data
 
 bp = Blueprint("main", __name__)
@@ -45,8 +50,8 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
             source_type, image_path, qr_url, access_key, receipt_number, series,
             merchant_name, merchant_cnpj, merchant_address, purchased_at,
             reported_item_count, subtotal, discount_total, total_paid,
-            payment_method, raw_text, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+            payment_method, raw_text, ocr_method, ocr_warnings, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
         """,
         (
             source_type,
@@ -65,6 +70,8 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
             parsed.get("total_paid", 0),
             parsed.get("payment_method"),
             parsed.get("raw_text"),
+            parsed.get("ocr_method"),
+            json.dumps(parsed.get("ocr_warnings", []), ensure_ascii=False),
         ),
     )
     receipt_id = cursor.lastrowid
@@ -74,8 +81,8 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
             INSERT INTO receipt_items (
                 receipt_id, line_number, item_code, description, quantity, unit,
                 unit_price, gross_total, discount, item_total, category_snapshot,
-                confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confidence, extraction_source, uncertain_fields
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 receipt_id,
@@ -90,10 +97,39 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
                 item.get("item_total", 0),
                 item.get("category") or infer_category(item.get("description")),
                 item.get("confidence"),
+                item.get("extraction_source", "rapidocr"),
+                json.dumps(item.get("uncertain_fields", []), ensure_ascii=False),
             ),
         )
     db.commit()
     return receipt_id
+
+
+def enrich_items_from_catalog(parsed: dict) -> None:
+    """Reaproveita a descrição revisada quando o Cod já existe no catálogo."""
+
+    db = get_db()
+    for item in parsed.get("items", []):
+        code = str(item.get("item_code") or "").strip()
+        if not code:
+            continue
+        scope = product_scope(code, parsed.get("merchant_cnpj"))
+        product = db.execute(
+            "SELECT canonical_name, category FROM products WHERE merchant_cnpj = ? AND barcode = ?",
+            (scope, code),
+        ).fetchone()
+        if product:
+            item["description"] = product["canonical_name"]
+            item["category"] = product["category"] or item.get("category")
+            item["confidence"] = 1.0
+            item["extraction_source"] = "catalog"
+            item["uncertain_fields"] = []
+
+
+def product_scope(code: str, merchant_cnpj: str | None) -> str:
+    """EANs são globais; PLUs curtos ficam no escopo do estabelecimento."""
+
+    return "" if len(code) >= 8 else (merchant_cnpj or "")
 
 
 @bp.route("/")
@@ -118,7 +154,12 @@ def receipts():
 
 @bp.route("/receipts/new")
 def new_receipt():
-    return render_template("receipt_form.html")
+    return render_template(
+        "receipt_form.html",
+        default_ocr_provider=current_app.config["OCR_PROVIDER"],
+        llm_provider=current_app.config["LLM_PROVIDER"],
+        submission_id=str(uuid.uuid4()),
+    )
 
 
 @bp.post("/receipts/process")
@@ -127,14 +168,30 @@ def process_receipt():
     receipt_url = request.form.get("receipt_url", "").strip()
     try:
         if upload and upload.filename:
+            try:
+                submission_id = str(uuid.UUID(request.form.get("submission_id", "")))
+            except ValueError:
+                submission_id = str(uuid.uuid4())
+            existing = get_db().execute(
+                "SELECT id FROM receipts WHERE submission_id = ?", (submission_id,)
+            ).fetchone()
+            if existing:
+                return redirect(
+                    url_for("main.processing_receipt", receipt_id=existing["id"])
+                )
             extension = Path(upload.filename).suffix.lower().lstrip(".")
             if extension not in ALLOWED_EXTENSIONS:
                 raise ValueError("Formato não aceito. Use JPG, PNG, WEBP ou TIFF.")
             name = f"{uuid.uuid4().hex}.{extension}"
             destination = Path(current_app.config["UPLOAD_FOLDER"]) / secure_filename(name)
             upload.save(destination)
-            parsed = process_image(destination, current_app.config["TESSERACT_LANG"])
-            receipt_id = save_parsed_receipt(parsed, "imagem", name)
+            ocr_mode = request.form.get("ocr_mode") or current_app.config["OCR_PROVIDER"]
+            receipt_id, created = enqueue_image_receipt(
+                get_db(), submission_id, name, ocr_mode
+            )
+            if not created:
+                remove_orphan_upload(current_app.config["UPLOAD_FOLDER"], name)
+            return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
         elif receipt_url:
             if not current_app.config["NFC_FETCH_ENABLED"]:
                 parsed = {
@@ -156,13 +213,63 @@ def process_receipt():
 @bp.route("/receipts/<int:receipt_id>/review")
 def review_receipt(receipt_id: int):
     receipt = get_receipt(receipt_id)
+    if receipt["status"] in {"queued", "processing", "failed"}:
+        return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
     items = get_db().execute(
         "SELECT * FROM receipt_items WHERE receipt_id = ? ORDER BY line_number, id",
         (receipt_id,),
     ).fetchall()
+    ocr_stats = {
+        "rows": len(items),
+        "expected": receipt["reported_item_count"],
+        "low_confidence": sum(
+            1 for item in items if item["confidence"] is None or item["confidence"] < 0.75
+        ),
+    }
+    try:
+        ocr_warnings = json.loads(receipt["ocr_warnings"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        ocr_warnings = [receipt["ocr_warnings"]] if receipt["ocr_warnings"] else []
     return render_template(
-        "receipt_review.html", receipt=receipt, items=items, categories=CATEGORIES
+        "receipt_review.html",
+        receipt=receipt,
+        items=items,
+        categories=CATEGORIES,
+        ocr_stats=ocr_stats,
+        ocr_warnings=ocr_warnings,
     )
+
+
+@bp.route("/receipts/<int:receipt_id>/processing")
+def processing_receipt(receipt_id: int):
+    receipt = get_receipt(receipt_id)
+    if receipt["status"] in {"draft", "confirmed"}:
+        return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
+    response = make_response(render_template("receipt_processing.html", receipt=receipt))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.route("/api/receipts/<int:receipt_id>/status")
+def receipt_processing_status(receipt_id: int):
+    receipt = get_receipt(receipt_id)
+    result = {
+        "status": receipt["status"],
+        "error": receipt["processing_error"],
+    }
+    if receipt["status"] in {"draft", "confirmed"}:
+        result["redirect_url"] = url_for("main.review_receipt", receipt_id=receipt_id)
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.post("/receipts/<int:receipt_id>/retry")
+def retry_processing_receipt(receipt_id: int):
+    get_receipt(receipt_id)
+    if retry_receipt(get_db(), receipt_id):
+        flash("Processamento colocado novamente na fila.", "success")
+    return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
 
 
 @bp.post("/receipts/<int:receipt_id>/save")
@@ -221,8 +328,12 @@ def save_receipt(receipt_id: int):
             continue
         code = fields["item_code"][index].strip()
         category = fields["category"][index] or infer_category(description)
+        scope = product_scope(code, request.form.get("merchant_cnpj"))
         product = (
-            db.execute("SELECT * FROM products WHERE barcode = ?", (code,)).fetchone()
+            db.execute(
+                "SELECT * FROM products WHERE merchant_cnpj = ? AND barcode = ?",
+                (scope, code),
+            ).fetchone()
             if code
             else None
         )
@@ -235,8 +346,8 @@ def save_receipt(receipt_id: int):
                 )
         else:
             product_id = db.execute(
-                "INSERT INTO products (barcode, canonical_name, category) VALUES (?, ?, ?)",
-                (code or None, description, category),
+                "INSERT INTO products (barcode, merchant_cnpj, canonical_name, category) VALUES (?, ?, ?, ?)",
+                (code or None, scope, description, category),
             ).lastrowid
         db.execute(
             """
@@ -244,7 +355,8 @@ def save_receipt(receipt_id: int):
                 receipt_id, product_id, line_number, item_code, description,
                 quantity, unit, unit_price, gross_total, discount, item_total,
                 category_snapshot, confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                , extraction_source, uncertain_fields
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'manual_review', '[]')
             """,
             (
                 receipt_id,
@@ -352,4 +464,3 @@ def seed():
     imported = seed_legacy_data(get_db(), seed_path)
     flash(f"{imported} compras históricas importadas.", "success")
     return redirect(url_for("main.dashboard"))
-

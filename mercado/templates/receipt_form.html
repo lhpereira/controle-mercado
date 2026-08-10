@@ -5,6 +5,7 @@
   <div><div class="eyebrow">Entrada de dados</div><h1>Registrar novo cupom</h1><p>Envie uma foto, cole o endereço da NFC-e ou comece um cadastro manual.</p></div>
 </div>
 <form action="{{ url_for('main.process_receipt') }}" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="submission_id" value="{{ submission_id }}">
   <section class="split">
     <article class="card">
       <div class="card-head"><div><h2>Foto do cupom</h2><div class="subtitle">OCR e QR Code serão processados juntos</div></div></div>
@@ -14,6 +15,16 @@
         <p>JPG, PNG, WEBP ou TIFF · máximo de 15 MB</p>
         <span class="button secondary" id="fileLabel">Selecionar imagem</span>
       </label>
+      <div class="field full" style="margin-top:15px">
+        <label for="ocr_mode">Motor de leitura</label>
+        <select id="ocr_mode" name="ocr_mode">
+          <option value="hybrid" {% if default_ocr_provider == 'hybrid' %}selected{% endif %}>Híbrido — OCR local e {{ llm_provider|capitalize }} nas dúvidas</option>
+          <option value="rapidocr" {% if default_ocr_provider == 'rapidocr' %}selected{% endif %}>Somente OCR local</option>
+          <option value="openai" {% if default_ocr_provider == 'openai' %}selected{% endif %}>Somente OpenAI</option>
+          <option value="ollama" {% if default_ocr_provider == 'ollama' %}selected{% endif %}>Somente Ollama local</option>
+        </select>
+        <small>No modo híbrido, a imagem só é enviada à LLM quando há linhas incompletas ou de baixa confiança.</small>
+      </div>
     </article>
     <article class="card">
       <div class="card-head"><div><h2>Endereço da NFC-e</h2><div class="subtitle">Use o link lido do QR Code, quando disponível</div></div></div>
@@ -40,6 +51,17 @@ input.addEventListener('change',()=>{if(input.files[0])label.textContent=input.f
 ['dragenter','dragover'].forEach(e=>zone.addEventListener(e,event=>{event.preventDefault();zone.classList.add('drag')}));
 ['dragleave','drop'].forEach(e=>zone.addEventListener(e,event=>{event.preventDefault();zone.classList.remove('drag')}));
 zone.addEventListener('drop',event=>{input.files=event.dataTransfer.files;input.dispatchEvent(new Event('change'))});
+document.querySelector('form').addEventListener('submit',event=>{
+  const form=event.currentTarget;
+  if(form.dataset.submitted==='true'){
+    event.preventDefault();
+    return;
+  }
+  form.dataset.submitted='true';
+  form.querySelectorAll('button[type="submit"]').forEach(button=>{
+    button.disabled=true;
+    if(button.textContent.includes('Processar'))button.textContent='Enviando cupomâ€¦';
+  });
+});
 </script>
 {% endblock %}
-

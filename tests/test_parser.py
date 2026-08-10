@@ -1,6 +1,6 @@
 import unittest
 
-from mercado.services.parser import parse_receipt_text
+from mercado.services.parser import parse_receipt_text, parse_structured_item
 
 
 SAMPLE = """
@@ -41,6 +41,52 @@ class ReceiptParserTest(unittest.TestCase):
         self.assertEqual(
             result["qr_url"], "https://www.dfe.ms.gov.br/nfce/consulta"
         )
+
+    def test_parses_fixed_receipt_columns_even_when_spacing_is_lost(self):
+        item = parse_structured_item(
+            "017898951850217 MASSA LASANHA BARILLA 21 UN 7.99 7.99", 1, 0.95
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["item_code"], "7898951850217")
+        self.assertEqual(item["description"], "MASSA LASANHA BARILLA 2")
+        self.assertEqual(item["quantity"], 1.0)
+        self.assertEqual(item["unit"], "UN")
+
+    def test_parses_weighted_item_with_merged_columns(self):
+        item = parse_structured_item(
+            "327360 PA0 FRANCESKG0.480KG 21,90 10.51", 32, 0.94
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["item_code"], "7360")
+        self.assertEqual(item["description"], "PAO FRANCESKG")
+        self.assertEqual(item["quantity"], 0.48)
+        self.assertEqual(item["unit"], "KG")
+        self.assertAlmostEqual(item["item_total"], 10.51)
+
+    def test_does_not_absorb_first_description_letter_into_ean(self):
+        item = parse_structured_item(
+            "30 7896625210664 0UE1J0 PARM V160R 200 1UN 26.99 26.99", 30, 0.95
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["item_code"], "7896625210664")
+        self.assertTrue(item["description"].startswith("QUEIJO"))
+
+    def test_accepts_three_digit_plu_and_merged_prices(self):
+        item = parse_structured_item(
+            "11246 TOMATE SALADA KG 0.825 KG 6.89 5.68", 11, 0.95
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["item_code"], "246")
+        self.assertEqual(item["unit"], "KG")
+        self.assertAlmostEqual(item["item_total"], 5.68)
+
+        repeated = parse_structured_item(
+            "06 7891097000799106 BATAVO 450G INTEGRA 1UM9.299.29", 6, 0.9
+        )
+        self.assertIsNotNone(repeated)
+        self.assertEqual(repeated["item_code"], "7891097000799")
+        self.assertEqual(repeated["unit"], "UN")
+        self.assertAlmostEqual(repeated["item_total"], 9.29)
 
 
 if __name__ == "__main__":
