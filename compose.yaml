@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-troque-esta-chave-em-producao}
+      APP_DATA_DIR: /data
+      MAX_UPLOAD_MB: 15
+      TESSERACT_LANG: por
+      NFC_FETCH_ENABLED: ${NFC_FETCH_ENABLED:-false}
+      NFC_ALLOWED_HOSTS: ${NFC_ALLOWED_HOSTS:-dfe.ms.gov.br,sefaz.ms.gov.br,nfce.sefaz.ms.gov.br}
+    volumes:
+      - mercado_data:/data
+    restart: unless-stopped
+
+volumes:
+  mercado_data:

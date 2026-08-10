@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Revisar cupom · Controle Mercado{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Revisão assistida</div><h1>Confira antes de confirmar</h1><p>Campos extraídos automaticamente podem conter erros de leitura.</p></div>
+  <span class="badge {{ receipt.status }}">{{ 'Confirmado' if receipt.status == 'confirmed' else 'Rascunho' }}</span>
+</div>
+<form method="post" action="{{ url_for('main.save_receipt', receipt_id=receipt.id) }}" id="reviewForm">
+  <div class="receipt-layout">
+    <aside class="card receipt-image">
+      <div class="card-head"><div><h2>Fonte</h2><div class="subtitle">{{ receipt.source_type }}</div></div></div>
+      {% if receipt.image_path %}<img src="{{ url_for('main.receipt_image', receipt_id=receipt.id) }}" alt="Imagem do cupom">{% else %}<div class="empty">Cadastro sem imagem.</div>{% endif %}
+      {% if receipt.raw_text %}<details style="margin-top:12px"><summary>Ver texto extraído</summary><pre class="ocr-text">{{ receipt.raw_text }}</pre></details>{% endif %}
+    </aside>
+    <div>
+      <section class="card">
+        <div class="card-head"><div><h2>Dados do cupom</h2><div class="subtitle">Identificação, pagamento e conferência</div></div></div>
+        <div class="form-grid">
+          <div class="field wide"><label>Estabelecimento</label><input name="merchant_name" value="{{ receipt.merchant_name or '' }}"></div>
+          <div class="field"><label>CNPJ</label><input name="merchant_cnpj" value="{{ receipt.merchant_cnpj or '' }}"></div>
+          <div class="field wide"><label>Endereço / filial</label><input name="merchant_address" value="{{ receipt.merchant_address or '' }}"></div>
+          <div class="field"><label>Data e hora</label><input type="datetime-local" name="purchased_at" value="{{ receipt.purchased_at[:16] if receipt.purchased_at else '' }}"></div>
+          <div class="field"><label>Número NFC-e</label><input name="receipt_number" value="{{ receipt.receipt_number or '' }}"></div>
+          <div class="field small"><label>Série</label><input name="series" value="{{ receipt.series or '' }}"></div>
+          <div class="field"><label>Itens informados</label><input type="number" name="reported_item_count" value="{{ receipt.reported_item_count or '' }}"></div>
+          <div class="field"><label>Subtotal</label><input class="money receipt-total" name="subtotal" value="{{ '%.2f'|format(receipt.subtotal or 0) }}"></div>
+          <div class="field"><label>Desconto total</label><input class="money receipt-total" name="discount_total" value="{{ '%.2f'|format(receipt.discount_total or 0) }}"></div>
+          <div class="field"><label>Total pago</label><input class="money receipt-total" name="total_paid" value="{{ '%.2f'|format(receipt.total_paid or 0) }}"></div>
+          <div class="field"><label>Forma de pagamento</label><input name="payment_method" value="{{ receipt.payment_method or '' }}"></div>
+          <div class="field full"><label>URL do QR Code</label><input type="url" name="qr_url" value="{{ receipt.qr_url or '' }}"></div>
+          <div class="field full"><label>Chave de acesso</label><input name="access_key" value="{{ receipt.access_key or '' }}"></div>
+        </div>
+      </section>
+      <section class="card" style="margin-top:15px">
+        <div class="card-head"><div><h2>Itens</h2><div class="subtitle">Corrija descrições, valores, descontos e categorias</div></div><button type="button" class="button secondary" id="addRow">+ Adicionar item</button></div>
+        <div class="item-editor"><table class="item-table"><thead><tr><th>Código</th><th>Descrição</th><th>Qtd.</th><th>Un.</th><th>Unitário</th><th>Bruto</th><th>Desconto</th><th>Total</th><th>Categoria</th><th></th></tr></thead><tbody id="itemsBody">
+          {% for item in items %}
+          <tr>
+            <td><input name="item_code[]" value="{{ item.item_code or '' }}"></td>
+            <td><input class="description" name="description[]" value="{{ item.description }}"></td>
+            <td><input class="calc qty" name="quantity[]" value="{{ item.quantity }}"></td>
+            <td><select name="unit[]">{% for unit in ['UN','KG','PT','CX','PC','PCT','FD','LT','L','G','ML'] %}<option {% if item.unit == unit %}selected{% endif %}>{{ unit }}</option>{% endfor %}</select></td>
+            <td><input class="calc unit-price" name="unit_price[]" value="{{ item.unit_price }}"></td>
+            <td><input class="calc gross" name="gross_total[]" value="{{ item.gross_total }}"></td>
+            <td><input class="calc discount" name="discount[]" value="{{ item.discount }}"></td>
+            <td><input class="calc item-total" name="item_total[]" value="{{ item.item_total }}"></td>
+            <td><select class="category" name="category[]">{% for category in categories %}<option {% if item.category_snapshot == category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></td>
+            <td><button class="remove-row" type="button">×</button></td>
+          </tr>
+          {% endfor %}
+        </tbody></table></div>
+        <div class="note" id="reconciliation" style="margin-top:12px"></div>
+      </section>
+    </div>
+  </div>
+  <div class="actions">
+    <a class="button ghost" href="{{ url_for('main.receipts') }}">Cancelar</a>
+    <button class="button secondary" name="action" value="draft">Salvar rascunho</button>
+    <button class="button" name="action" value="confirm">Confirmar compra</button>
+  </div>
+</form>
+<template id="rowTemplate">
+  <tr><td><input name="item_code[]"></td><td><input class="description" name="description[]"></td><td><input class="calc qty" name="quantity[]" value="1"></td><td><select name="unit[]">{% for unit in ['UN','KG','PT','CX','PC','PCT','FD','LT','L','G','ML'] %}<option>{{ unit }}</option>{% endfor %}</select></td><td><input class="calc unit-price" name="unit_price[]" value="0"></td><td><input class="calc gross" name="gross_total[]" value="0"></td><td><input class="calc discount" name="discount[]" value="0"></td><td><input class="calc item-total" name="item_total[]" value="0"></td><td><select class="category" name="category[]">{% for category in categories %}<option>{{ category }}</option>{% endfor %}</select></td><td><button class="remove-row" type="button">×</button></td></tr>
+</template>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='review.js') }}"></script>{% endblock %}
+

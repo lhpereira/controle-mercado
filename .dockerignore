@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.env
+data/
+tests/fixtures/
+

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Painel · Controle Mercado{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="eyebrow">Inteligência de compras</div>
+  <h1>Seu mercado em perspectiva</h1>
+  <p>Preços, hábitos, descontos e oportunidades calculados a partir dos cupons confirmados.</p>
+  <div class="filters">
+    <div class="filter"><label for="start">De</label><input id="start" type="date" value="{{ options.start or '' }}"></div>
+    <div class="filter"><label for="end">Até</label><input id="end" type="date" value="{{ options.end or '' }}"></div>
+    <div class="filter"><label for="store">Estabelecimento</label><select id="store"><option value="">Todos</option>{% for store in options.stores %}<option value="{{ store.cnpj }}">{{ store.name }} · {{ store.cnpj }}</option>{% endfor %}</select></div>
+    <div class="filter"><label for="category">Categoria</label><select id="category"><option value="">Todas</option>{% for category in options.categories %}<option>{{ category }}</option>{% endfor %}</select></div>
+    <div class="filter"><label for="period">Período do mês</label><select id="period"><option value="">Todos</option><option>Início (1–10)</option><option>Meio (11–20)</option><option>Fim (21–31)</option></select></div>
+    <div class="filter search"><label for="q">Produto</label><input id="q" type="search" placeholder="Descrição ou código"></div>
+    <button class="button lime" id="clear">Limpar</button>
+  </div>
+</section>
+<section class="kpis">
+  <article class="kpi"><div class="kpi-label">Gasto total</div><div class="kpi-value" id="spend">—</div><div class="kpi-note" id="spendNote"></div></article>
+  <article class="kpi"><div class="kpi-label">Cupons</div><div class="kpi-value" id="trips">—</div><div class="kpi-note">compras confirmadas</div></article>
+  <article class="kpi"><div class="kpi-label">Ticket médio</div><div class="kpi-value" id="ticket">—</div><div class="kpi-note">por cupom</div></article>
+  <article class="kpi"><div class="kpi-label">Produtos</div><div class="kpi-value" id="products">—</div><div class="kpi-note">códigos/descrições distintos</div></article>
+  <article class="kpi"><div class="kpi-label">Descontos</div><div class="kpi-value" id="discount">—</div><div class="kpi-note">registrados nos itens</div></article>
+</section>
+<section class="grid">
+  <article class="card span-8"><div class="card-head"><div><h2>Gasto por dia</h2><div class="subtitle">Valor dos cupons e quantidade de linhas</div></div></div><div class="chart-box tall"><canvas id="dailyChart"></canvas></div></article>
+  <article class="card span-4"><div class="card-head"><div><h2>Leituras rápidas</h2><div class="subtitle">Atualizadas com os filtros</div></div></div><div id="insights"></div></article>
+  <article class="card span-7"><div class="card-head"><div><h2>Histórico de preço</h2><div class="subtitle">Etiqueta versus preço efetivo</div></div><select id="focusProduct" class="button secondary"></select></div><div class="chart-box"><canvas id="priceChart"></canvas></div></article>
+  <article class="card span-5"><div class="card-head"><div><h2>Composição do gasto</h2><div class="subtitle">Por categoria do catálogo</div></div></div><div class="chart-box"><canvas id="categoryChart"></canvas></div></article>
+  <article class="card span-6"><div class="card-head"><div><h2>Estabelecimentos</h2><div class="subtitle">Gasto e ticket médio</div></div></div><div class="chart-box"><canvas id="storeChart"></canvas></div></article>
+  <article class="card span-6"><div class="card-head"><div><h2>Quando você compra</h2><div class="subtitle">Início, meio e fim do mês</div></div></div><div class="chart-box"><canvas id="periodChart"></canvas></div></article>
+  <article class="card span-12"><div class="card-head"><div><h2>Onde o mesmo produto saiu mais barato</h2><div class="subtitle">Produtos observados em mais de um CNPJ</div></div></div><div id="storeComparison"></div></article>
+  <article class="card span-12"><div class="card-head"><div><h2>Produtos com maior variação</h2><div class="subtitle">Preço efetivo em duas ou mais datas</div></div></div><div id="variation"></div></article>
+  <article class="card span-12"><div class="card-head"><div><h2>Itens comprados</h2><div class="subtitle" id="rowCount"></div></div></div><div id="details"></div></article>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='dashboard.js') }}"></script>{% endblock %}

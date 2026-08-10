@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Produtos · Controle Mercado{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">Catálogo</div><h1>Produtos</h1><p>Enriqueça categoria, marca e embalagem uma única vez.</p></div></div>
+<section class="card">
+  <div class="note" style="margin-bottom:15px">O código de barras identifica o produto. Para itens por peso ou códigos internos de loja, use o nome padronizado para facilitar comparações.</div>
+  <div class="table-wrap"><table><thead><tr><th>Código</th><th>Produto</th><th>Marca</th><th>Categoria</th><th>Embalagem</th><th class="num">Compras</th><th class="num">Gasto</th><th></th></tr></thead><tbody>
+  {% for product in products %}
+    <tr>
+      <td>{{ product.barcode or '—' }}</td><td class="product-name">{{ product.canonical_name }}</td><td>{{ product.brand or '—' }}</td><td><span class="badge">{{ product.category or 'Outros' }}</span><br><span class="muted">{{ product.subcategory or '' }}</span></td>
+      <td>{{ product.package_quantity or '—' }} {{ product.package_unit or '' }}{% if product.units_per_package and product.units_per_package != 1 %} × {{ product.units_per_package }}{% endif %}</td><td class="num">{{ product.purchases }}</td><td class="num">R$ {{ '%.2f'|format(product.spend)|replace('.', ',') }}</td>
+      <td><details class="product-editor"><summary>Editar</summary><form method="post" action="{{ url_for('main.update_product', product_id=product.id) }}">
+        <div class="field full"><label>Nome padronizado</label><input name="canonical_name" value="{{ product.canonical_name }}"></div>
+        <div class="field"><label>Marca</label><input name="brand" value="{{ product.brand or '' }}"></div>
+        <div class="field"><label>Categoria</label><select name="category">{% for category in categories %}<option {% if product.category == category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Subcategoria</label><input name="subcategory" value="{{ product.subcategory or '' }}"></div>
+        <div class="field"><label>Conteúdo</label><input name="package_quantity" value="{{ product.package_quantity or '' }}"></div>
+        <div class="field"><label>Unidade</label><select name="package_unit"><option></option>{% for unit in ['g','kg','ml','L','un'] %}<option {% if product.package_unit == unit %}selected{% endif %}>{{ unit }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Unidades no pacote</label><input name="units_per_package" value="{{ product.units_per_package or 1 }}"></div>
+        <div class="field full"><label>Observações</label><input name="notes" value="{{ product.notes or '' }}"></div>
+        <button class="button full">Salvar produto</button>
+      </form></details></td>
+    </tr>
+  {% else %}<tr><td colspan="8" class="empty">Nenhum produto cadastrado.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Novo cupom · Controle Mercado{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Entrada de dados</div><h1>Registrar novo cupom</h1><p>Envie uma foto, cole o endereço da NFC-e ou comece um cadastro manual.</p></div>
+</div>
+<form action="{{ url_for('main.process_receipt') }}" method="post" enctype="multipart/form-data">
+  <section class="split">
+    <article class="card">
+      <div class="card-head"><div><h2>Foto do cupom</h2><div class="subtitle">OCR e QR Code serão processados juntos</div></div></div>
+      <label class="upload-zone" id="uploadZone" for="receipt_image">
+        <input id="receipt_image" name="receipt_image" type="file" accept="image/jpeg,image/png,image/webp,image/tiff" capture="environment">
+        <div class="icon">▧</div><h3>Escolha ou fotografe o cupom</h3>
+        <p>JPG, PNG, WEBP ou TIFF · máximo de 15 MB</p>
+        <span class="button secondary" id="fileLabel">Selecionar imagem</span>
+      </label>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h2>Endereço da NFC-e</h2><div class="subtitle">Use o link lido do QR Code, quando disponível</div></div></div>
+      <div class="field full"><label for="receipt_url">URL do portal fiscal</label><input id="receipt_url" name="receipt_url" type="url" placeholder="https://nfce.sefaz..."></div>
+      <div class="note" style="margin-top:12px">Por segurança, a consulta automática aceita apenas portais fiscais permitidos na configuração. Alguns portais podem exigir CAPTCHA ou executar conteúdo que impeça a extração automática; nesses casos, a imagem continua sendo o método principal.</div>
+      <button class="button secondary" type="submit" style="margin-top:15px">Consultar endereço</button>
+    </article>
+  </section>
+  <section class="steps">
+    <div class="step"><strong>1. Captura</strong>A aplicação preserva a imagem original e tenta ler o QR Code.</div>
+    <div class="step"><strong>2. Extração</strong>OCR identifica mercado, data, totais, itens e descontos.</div>
+    <div class="step"><strong>3. Revisão</strong>Você corrige os campos antes de confirmar a compra.</div>
+  </section>
+  <div class="actions">
+    <button class="button ghost" type="submit">Começar manualmente</button>
+    <button class="button" type="submit">Processar cupom</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+const input=document.getElementById('receipt_image'),zone=document.getElementById('uploadZone'),label=document.getElementById('fileLabel');
+input.addEventListener('change',()=>{if(input.files[0])label.textContent=input.files[0].name});
+['dragenter','dragover'].forEach(e=>zone.addEventListener(e,event=>{event.preventDefault();zone.classList.add('drag')}));
+['dragleave','drop'].forEach(e=>zone.addEventListener(e,event=>{event.preventDefault();zone.classList.remove('drag')}));
+zone.addEventListener('drop',event=>{input.files=event.dataTransfer.files;input.dispatchEvent(new Event('change'))});
+</script>
+{% endblock %}
+
