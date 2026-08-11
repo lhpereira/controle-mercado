@@ -13,7 +13,7 @@ from mercado.services.llm_ocr import (
     extract_with_llm,
     validated_llm_item,
 )
-from mercado.services.ocr import process_image
+from mercado.services.ocr import _merge_hybrid, process_image
 
 
 def llm_receipt(items=None):
@@ -94,6 +94,7 @@ class LLMOCRTest(unittest.TestCase):
             {
                 "OLLAMA_MODEL": "qwen3-vl:8b",
                 "OLLAMA_BASE_URL": "http://ollama:11434/v1",
+                "OLLAMA_CONTEXT_LENGTH": 8192,
             },
             target_lines=[6, 7],
         )
@@ -105,7 +106,94 @@ class LLMOCRTest(unittest.TestCase):
         self.assertEqual(payload["format"]["type"], "object")
         self.assertFalse(payload["think"])
         self.assertFalse(payload["stream"])
+        self.assertEqual(payload["options"]["num_ctx"], 8192)
         self.assertNotIn("data:image", payload["messages"][0]["images"][0])
+
+    @patch("mercado.services.llm_ocr.requests.post")
+    def test_glm_ocr_uses_text_recognition_and_parses_transcription(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "message": {
+                "content": """
+CNPJ: 09.477.652/0111-20 MERCADO TESTE
+01 7892840800000 REFRIG PEPSI COLA 2L 1 UN 8,49 8,49
+Qtd. total de itens 1
+Valor total R$ 8,49
+"""
+            }
+        }
+        post.return_value = response
+
+        result = extract_with_llm(
+            self.image,
+            "ollama",
+            {
+                "OLLAMA_MODEL": "glm-ocr",
+                "OLLAMA_BASE_URL": "http://ollama:11434/v1",
+                "OLLAMA_CONTEXT_LENGTH": 16384,
+            },
+        )
+
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["messages"][0]["content"], "Text Recognition")
+        self.assertNotIn("format", payload)
+        self.assertEqual(payload["options"]["num_predict"], 10000)
+        self.assertEqual(result["reported_item_count"], 1)
+        self.assertEqual(result["items"][0]["item_code"], "7892840800000")
+        self.assertTrue(result["_replace_metadata"])
+
+    def test_complete_glm_transcription_replaces_tesseract_fallback(self):
+        local = llm_receipt(
+            [
+                {
+                    "line_number": 1,
+                    "item_code": "111",
+                    "description": "ITEM INCOMPLETO",
+                    "quantity": 1,
+                    "unit": "UN",
+                    "unit_price": 1,
+                    "gross_total": 1,
+                    "discount": 0,
+                    "item_total": 1,
+                    "confidence": 0.5,
+                    "uncertain_fields": ["description"],
+                    "evidence": "",
+                }
+            ]
+        )
+        complete = llm_receipt(
+            [
+                {
+                    "line_number": number,
+                    "item_code": str(7890000000000 + number),
+                    "description": f"ITEM {number}",
+                    "quantity": 1,
+                    "unit": "UN",
+                    "unit_price": 2,
+                    "gross_total": 2,
+                    "discount": 0,
+                    "item_total": 2,
+                    "confidence": 0.9,
+                    "uncertain_fields": [],
+                    "evidence": "",
+                }
+                for number in (1, 2)
+            ]
+        )
+        complete.update(
+            {
+                "provider": "ollama",
+                "model": "glm-ocr",
+                "_replace_metadata": True,
+            }
+        )
+
+        _merge_hybrid(local, complete, [1])
+
+        self.assertEqual(len(local["items"]), 2)
+        self.assertEqual(local["reported_item_count"], 2)
+        self.assertEqual(local["items"][1]["description"], "ITEM 2")
 
     def test_accepts_short_store_plu_and_flags_bad_reconciliation(self):
         item = validated_llm_item(

@@ -154,6 +154,9 @@ def _merge_metadata(parsed: dict, llm_result: dict, *, replace: bool) -> None:
 
 
 def _merge_hybrid(parsed: dict, llm_result: dict, targets: list[int]) -> None:
+    if llm_result.get("_replace_metadata"):
+        _replace_with_llm(parsed, llm_result)
+        return
     replacements = {
         item["line_number"]: item
         for item in validated_llm_items(llm_result, set(targets))
@@ -169,7 +172,11 @@ def _merge_hybrid(parsed: dict, llm_result: dict, targets: list[int]) -> None:
             "A LLM não produziu uma correção válida para as linhas: "
             + ", ".join(map(str, missing))
         )
-    _merge_metadata(parsed, llm_result, replace=False)
+    _merge_metadata(
+        parsed,
+        llm_result,
+        replace=bool(llm_result.get("_replace_metadata")),
+    )
 
 
 def _replace_with_llm(parsed: dict, llm_result: dict) -> None:

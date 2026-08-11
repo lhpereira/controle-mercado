@@ -12,6 +12,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ..categories import infer_category
+from .parser import parse_receipt_text
 
 
 UNITS = {"UN", "KG", "PT", "CX", "PC", "PCT", "FD", "LT", "L", "G", "ML"}
@@ -103,6 +104,7 @@ class LLMProviderConfig:
     api_key: str
     timeout: int = 90
     image_detail: str = "high"
+    ollama_context_length: int = 16384
 
 
 def provider_config(provider: str, settings: Mapping) -> LLMProviderConfig:
@@ -122,6 +124,7 @@ def provider_config(provider: str, settings: Mapping) -> LLMProviderConfig:
             image_detail=detail,
         )
     if provider == "ollama":
+        context_length = max(2048, int(settings.get("OLLAMA_CONTEXT_LENGTH", 16384)))
         return LLMProviderConfig(
             provider="ollama",
             model=str(settings.get("OLLAMA_MODEL", "qwen3-vl:8b")),
@@ -129,8 +132,26 @@ def provider_config(provider: str, settings: Mapping) -> LLMProviderConfig:
             api_key=str(settings.get("OLLAMA_API_KEY", "ollama")),
             timeout=timeout,
             image_detail=detail,
+            ollama_context_length=context_length,
         )
     raise LLMOCRConfigurationError(f"Provedor de LLM desconhecido: {provider}")
+
+
+def _has_target_crop_boxes(
+    local_result: dict | None,
+    target_lines: list[int] | None,
+) -> bool:
+    if not local_result or not target_lines:
+        return False
+    items = {
+        int(item.get("line_number", 0)): item
+        for item in local_result.get("items", [])
+    }
+    return all(
+        isinstance(items.get(line_number, {}).get("_crop_box"), (list, tuple))
+        and len(items[line_number]["_crop_box"]) == 4
+        for line_number in target_lines
+    )
 
 
 def _target_contact_sheet(
@@ -138,7 +159,7 @@ def _target_contact_sheet(
     local_result: dict | None,
     target_lines: list[int] | None,
 ) -> Image.Image | None:
-    if not local_result or not target_lines:
+    if not _has_target_crop_boxes(local_result, target_lines):
         return None
     items = {
         int(item.get("line_number", 0)): item
@@ -298,6 +319,7 @@ def _request_ollama(
     prompt: str,
     image_url: str,
     max_output_tokens: int,
+    text_ocr: bool = False,
 ) -> dict:
     base_url = config.base_url[:-3] if config.base_url.endswith("/v1") else config.base_url
     payload = {
@@ -305,16 +327,21 @@ def _request_ollama(
         "messages": [
             {
                 "role": "user",
-                "content": prompt,
+                "content": "Text Recognition" if text_ocr else prompt,
                 "images": [image_url.split(",", 1)[1]],
             }
         ],
-        "format": RECEIPT_SCHEMA,
         "stream": False,
         "think": False,
         "keep_alive": "10m",
-        "options": {"temperature": 0, "num_predict": max_output_tokens},
+        "options": {
+            "temperature": 0,
+            "num_ctx": config.ollama_context_length,
+            "num_predict": max(6000, max_output_tokens) if text_ocr else max_output_tokens,
+        },
     }
+    if not text_ocr:
+        payload["format"] = RECEIPT_SCHEMA
     response = requests.post(
         base_url + "/api/chat",
         headers={"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"},
@@ -335,18 +362,39 @@ def extract_with_llm(
     config = provider_config(provider, settings)
     prompt = _prompt(local_result, target_lines)
     image_url = _image_data_url(path, local_result, target_lines)
+    text_ocr = config.provider == "ollama" and config.model.rsplit("/", 1)[-1].lower().startswith("glm-ocr")
     max_output_tokens = min(
         10000, max(1800, (len(target_lines) if target_lines else 32) * 320)
     )
     response = (
         _request_openai(config, prompt, image_url)
         if config.provider == "openai"
-        else _request_ollama(config, prompt, image_url, max_output_tokens)
+        else _request_ollama(
+            config,
+            prompt,
+            image_url,
+            max_output_tokens,
+            text_ocr=text_ocr,
+        )
     )
-    try:
-        parsed = json.loads(_response_text(response, config.provider))
-    except (TypeError, json.JSONDecodeError) as error:
-        raise LLMOCRResponseError("A resposta do modelo não contém JSON válido") from error
+    response_text = _response_text(response, config.provider)
+    if text_ocr:
+        parsed = parse_receipt_text(response_text)
+        if not parsed.get("items"):
+            raise LLMOCRResponseError(
+                "A transcrição do glm-ocr não contém itens reconhecíveis"
+            )
+        for item in parsed["items"]:
+            item["uncertain_fields"] = []
+            item["evidence"] = item.get("ocr_text", "")
+        parsed["_replace_metadata"] = not _has_target_crop_boxes(
+            local_result, target_lines
+        )
+    else:
+        try:
+            parsed = json.loads(response_text)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise LLMOCRResponseError("A resposta do modelo não contém JSON válido") from error
     if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
         raise LLMOCRResponseError("A resposta do modelo não contém uma lista de itens")
     parsed["provider"] = config.provider

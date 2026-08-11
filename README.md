@@ -11,6 +11,7 @@ A entrada principal é uma fotografia do cupom. A aplicação combina OCR local,
 - OCR local estruturado para a tabela `# | Cod | Descrição | Qt | Un | Vlr | Total`;
 - Tesseract como alternativa quando o layout estruturado não é localizado;
 - revisão opcional com OpenAI ou Ollama;
+- adaptador nativo para o `glm-ocr`, usando transcrição textual em vez de JSON Schema;
 - modo híbrido que envia à LLM somente as linhas duvidosas;
 - leitura do QR Code e armazenamento da URL da NFC-e;
 - revisão manual antes da confirmação da compra;
@@ -169,21 +170,28 @@ Se a LLM falhar, exceder o tempo limite ou produzir uma resposta inválida, o re
 
 ## Configurar o Ollama
 
-Instale um modelo com suporte a visão. Exemplo usado durante o desenvolvimento:
+Instale um modelo com suporte a visão. O `glm-ocr` é recomendado quando a prioridade é transcrever cupons e tabelas com baixa latência:
+
+```powershell
+ollama pull glm-ocr
+```
+
+Modelos visuais generalistas também são suportados:
 
 ```powershell
 ollama pull qwen3.5:9b
 ```
 
-Configuração recomendada no `.env`:
+Configuração recomendada para OCR especializado:
 
 ```dotenv
 OCR_PROVIDER=hybrid
 LLM_PROVIDER=ollama
 LLM_TIMEOUT_SECONDS=300
 OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
-OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_MODEL=glm-ocr
 OLLAMA_API_KEY=ollama
+OLLAMA_CONTEXT_LENGTH=16384
 ```
 
 Teste o Ollama no computador hospedeiro:
@@ -193,7 +201,17 @@ curl.exe http://localhost:11434/api/version
 curl.exe http://localhost:11434/api/tags
 ```
 
-A aplicação utiliza a API nativa `/api/chat`, com JSON Schema, `stream=false` e raciocínio desativado. A configuração aceita `OLLAMA_BASE_URL` com ou sem o sufixo `/v1`.
+A aplicação utiliza a API nativa `/api/chat`, com JSON Schema, `stream=false`, raciocínio desativado e contexto definido por requisição. A configuração aceita `OLLAMA_BASE_URL` com ou sem o sufixo `/v1`.
+
+`OLLAMA_CONTEXT_LENGTH` afeta somente as requisições desta aplicação. Isso permite manter um contexto global maior no Ollama para outros sistemas. Para cupons, `16384` oferece espaço suficiente para o prompt, a imagem e o JSON estruturado sem reservar o contexto máximo do modelo.
+
+O modelo `glm-ocr` recebe tratamento específico: ele é chamado em modo `Text Recognition`, sem JSON Schema, e sua transcrição é convertida pelo parser da aplicação. Quando o OCR estruturado falha e o `glm-ocr` transcreve o cupom completo, a lista integral validada substitui o fallback do Tesseract, inclusive os metadados e a quantidade informada de itens.
+
+Modelos visuais generalistas, como `qwen3.5`, continuam usando resposta estruturada por JSON Schema. Para utilizá-los, altere apenas:
+
+```dotenv
+OLLAMA_MODEL=qwen3.5:9b
+```
 
 Em Docker Desktop, `host.docker.internal` aponta do container para o computador hospedeiro. Se o Ollama estiver em outro container ou computador, ajuste a URL.
 
@@ -254,6 +272,89 @@ Uma linha por item do cupom. Armazena código, descrição, quantidade, unidade,
 ### `products`
 
 Catálogo reutilizável com nome canônico, marca, categoria, subcategoria, dados de embalagem e escopo do código do produto.
+
+### Diagrama entidade-relacionamento
+
+```mermaid
+erDiagram
+    RECEIPTS ||--o{ RECEIPT_ITEMS : "contém"
+    PRODUCTS o|--o{ RECEIPT_ITEMS : "classifica"
+
+    RECEIPTS {
+        INTEGER id PK
+        TEXT source_type
+        TEXT image_path
+        TEXT qr_url
+        TEXT access_key
+        TEXT receipt_number
+        TEXT series
+        TEXT merchant_name
+        TEXT merchant_cnpj
+        TEXT merchant_address
+        TEXT purchased_at
+        INTEGER reported_item_count
+        NUMERIC subtotal
+        NUMERIC discount_total
+        NUMERIC total_paid
+        TEXT payment_method
+        TEXT raw_text
+        TEXT ocr_method
+        TEXT ocr_warnings
+        TEXT submission_id UK
+        TEXT ocr_mode
+        TEXT processing_started_at
+        TEXT processing_error
+        TEXT status
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    PRODUCTS {
+        INTEGER id PK
+        TEXT barcode UK
+        TEXT merchant_cnpj UK
+        TEXT canonical_name
+        TEXT brand
+        TEXT category
+        TEXT subcategory
+        NUMERIC package_quantity
+        TEXT package_unit
+        NUMERIC units_per_package
+        TEXT notes
+        TEXT created_at
+        TEXT updated_at
+    }
+
+    RECEIPT_ITEMS {
+        INTEGER id PK
+        INTEGER receipt_id FK
+        INTEGER product_id FK
+        INTEGER line_number
+        TEXT item_code
+        TEXT description
+        NUMERIC quantity
+        TEXT unit
+        NUMERIC unit_price
+        NUMERIC gross_total
+        NUMERIC discount
+        NUMERIC item_total
+        TEXT category_snapshot
+        NUMERIC confidence
+        TEXT extraction_source
+        TEXT uncertain_fields
+        TEXT created_at
+    }
+```
+
+Regras de integridade e índices:
+
+- `receipt_items.receipt_id` é obrigatório e referencia `receipts.id`;
+- ao excluir um recibo, seus itens são removidos por `ON DELETE CASCADE`;
+- `receipt_items.product_id` é opcional e referencia `products.id`;
+- ao excluir um produto, o item histórico é preservado e `product_id` recebe `NULL` por `ON DELETE SET NULL`;
+- `receipts.submission_id` possui índice único quando preenchido, garantindo idempotência do upload;
+- o par `products.merchant_cnpj + products.barcode` é único quando o código está preenchido;
+- existem índices para data e CNPJ do recibo e para as duas chaves estrangeiras dos itens.
 
 As migrações necessárias são aplicadas automaticamente na inicialização. O banco e as imagens ficam no volume Docker `mercado_data`, montado em `/data`.
 
@@ -329,6 +430,7 @@ controle-mercado/
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | endereço do Ollama |
 | `OLLAMA_MODEL` | `qwen3-vl:8b` | modelo visual do Ollama |
 | `OLLAMA_API_KEY` | `ollama` | valor de compatibilidade; o Ollama local normalmente não valida a chave |
+| `OLLAMA_CONTEXT_LENGTH` | `16384` | contexto enviado como `num_ctx` somente nas chamadas desta aplicação |
 | `WORKER_POLL_SECONDS` | `1` | intervalo de consulta da fila |
 | `PROCESSING_STALE_MINUTES` | `20` | tempo para retomar uma tarefa interrompida |
 | `NFC_FETCH_ENABLED` | `false` | habilita a consulta da URL fiscal |
@@ -361,7 +463,7 @@ Execute na raiz do projeto ou dentro do container:
 python -m unittest discover -s tests -v
 ```
 
-Os testes cobrem parser, colunas fixas, códigos PLU, OCR híbrido, conectores OpenAI/Ollama, recortes das linhas, fila assíncrona, falhas, nova tentativa e prevenção de duplicidades.
+Os 18 testes cobrem parser, colunas fixas, códigos PLU, OCR híbrido, conectores OpenAI/Ollama, adaptador `glm-ocr`, substituição do fallback completo, recortes das linhas, contexto por requisição, fila assíncrona, falhas, nova tentativa e prevenção de duplicidades.
 
 ## Diagnóstico
 

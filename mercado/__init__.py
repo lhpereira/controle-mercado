@@ -32,6 +32,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         ),
         OLLAMA_MODEL=os.getenv("OLLAMA_MODEL", "qwen3-vl:8b"),
         OLLAMA_API_KEY=os.getenv("OLLAMA_API_KEY", "ollama"),
+        OLLAMA_CONTEXT_LENGTH=int(os.getenv("OLLAMA_CONTEXT_LENGTH", "16384")),
         WORKER_POLL_SECONDS=float(os.getenv("WORKER_POLL_SECONDS", "1")),
         PROCESSING_STALE_MINUTES=int(os.getenv("PROCESSING_STALE_MINUTES", "20")),
         SKIP_SEED=False,
