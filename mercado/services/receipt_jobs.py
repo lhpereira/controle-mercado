@@ -9,12 +9,14 @@ from ..categories import infer_category
 
 def enqueue_image_receipt(
     db: sqlite3.Connection,
+    user_id: int,
     submission_id: str,
     image_path: str,
     ocr_mode: str,
 ) -> tuple[int, bool]:
     existing = db.execute(
-        "SELECT id FROM receipts WHERE submission_id = ?", (submission_id,)
+        "SELECT id FROM receipts WHERE submission_id = ? AND user_id = ?",
+        (submission_id, user_id),
     ).fetchone()
     if existing:
         return int(existing["id"]), False
@@ -22,17 +24,18 @@ def enqueue_image_receipt(
         cursor = db.execute(
             """
             INSERT INTO receipts (
-                source_type, image_path, status, submission_id, ocr_mode
-            ) VALUES ('imagem', ?, 'queued', ?, ?)
+                user_id, source_type, image_path, status, submission_id, ocr_mode
+            ) VALUES (?, 'imagem', ?, 'queued', ?, ?)
             """,
-            (image_path, submission_id, ocr_mode),
+            (user_id, image_path, submission_id, ocr_mode),
         )
         db.commit()
         return int(cursor.lastrowid), True
     except sqlite3.IntegrityError:
         db.rollback()
         existing = db.execute(
-            "SELECT id FROM receipts WHERE submission_id = ?", (submission_id,)
+            "SELECT id FROM receipts WHERE submission_id = ? AND user_id = ?",
+            (submission_id, user_id),
         ).fetchone()
         if not existing:
             raise

@@ -13,6 +13,8 @@ button,input,select,textarea{font:inherit}
 .brand strong,.brand small{display:block}.brand strong{font-size:14px}.brand small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
 nav{display:flex;align-items:center;gap:6px}nav a{padding:9px 12px;border-radius:10px;font-size:12px;font-weight:650;color:#536057}nav a:hover{background:#eef2e9;color:var(--green)}
 nav .primary-link{background:var(--green);color:#fff;padding-inline:16px}nav .primary-link:hover{background:var(--green2);color:#fff}
+.nav-user{padding:9px 6px;font-size:11px;color:var(--muted);font-weight:650}
+.auth-wrap{max-width:400px;margin:60px auto}
 .page{max-width:1480px;margin:auto;padding:24px}
 .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin:5px 0 20px}.page-head h1{font-size:32px;letter-spacing:-.045em;line-height:1.1;margin:0}.page-head p{color:var(--muted);font-size:13px;margin:7px 0 0}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--green2);font-size:10px;font-weight:850;margin-bottom:7px}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Criar conta · Controle Mercado{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <section class="card">
+    <div class="card-head"><div><h2>Criar conta</h2><div class="subtitle">Seus cupons e seu painel ficam privados, só você vê</div></div></div>
+    <form method="post">
+      <div class="form-grid">
+        <div class="field full"><label for="username">Usuário</label><input id="username" name="username" autocomplete="username" required autofocus></div>
+        <div class="field full"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="8"></div>
+        <div class="field full"><label for="confirm_password">Confirmar senha</label><input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required minlength="8"></div>
+      </div>
+      <div class="note" style="margin-top:12px">Usuário: 3 a 32 caracteres (letras, números, ponto, traço ou sublinhado). Senha: mínimo de 8 caracteres.</div>
+      <div class="actions" style="justify-content:flex-start">
+        <button class="button" type="submit">Criar conta</button>
+        <a class="button ghost" href="{{ url_for('auth.login') }}">Já tenho conta</a>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

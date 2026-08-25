@@ -5,6 +5,7 @@ from pathlib import Path
 
 from flask import Flask
 
+from .auth import bp as auth_bp
 from .db import get_db, init_app, init_db
 from .routes import bp
 from .services.seed import seed_legacy_data
@@ -53,6 +54,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     init_app(app)
     app.register_blueprint(bp)
+    app.register_blueprint(auth_bp)
 
     with app.app_context():
         init_db()

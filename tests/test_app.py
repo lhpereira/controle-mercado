@@ -24,6 +24,14 @@ class AppTest(unittest.TestCase):
             }
         )
         self.client = self.app.test_client()
+        self.client.post(
+            "/register",
+            data={
+                "username": "tester",
+                "password": "senha1234",
+                "confirm_password": "senha1234",
+            },
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -92,6 +100,7 @@ class AppTest(unittest.TestCase):
         self.assertIn("ocr_method", receipt_columns)
         self.assertIn("ocr_warnings", receipt_columns)
         self.assertIn("fiscal_status", receipt_columns)
+        self.assertIn("user_id", receipt_columns)
         self.assertIn("fiscal_differences", receipt_columns)
         self.assertIn("fiscal_checked_at", receipt_columns)
         self.assertIn("extraction_source", item_columns)
@@ -350,6 +359,88 @@ class AppTest(unittest.TestCase):
                 "SELECT fiscal_status FROM receipts WHERE id = ?", (receipt_id,)
             ).fetchone()["fiscal_status"]
         self.assertIsNone(status)
+
+    def test_registration_requires_matching_passwords(self):
+        self.client.post("/logout")
+        response = self.client.post(
+            "/register",
+            data={
+                "username": "outro",
+                "password": "senha1234",
+                "confirm_password": "diferente",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("não coincidem".encode(), response.data)
+
+    def test_registration_rejects_short_password(self):
+        self.client.post("/logout")
+        response = self.client.post(
+            "/register",
+            data={"username": "outro", "password": "curta", "confirm_password": "curta"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("8 caracteres".encode(), response.data)
+
+    def test_registration_rejects_duplicate_username(self):
+        self.client.post("/logout")
+        response = self.client.post(
+            "/register",
+            data={
+                "username": "tester",
+                "password": "outrasenha1",
+                "confirm_password": "outrasenha1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("já está em uso".encode(), response.data)
+
+    def test_login_rejects_wrong_password(self):
+        self.client.post("/logout")
+        response = self.client.post(
+            "/login", data={"username": "tester", "password": "senhaerrada"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("inválidos".encode(), response.data)
+
+    def test_logged_out_user_is_redirected_to_login(self):
+        self.client.post("/logout")
+        response = self.client.get("/receipts")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+
+    def test_health_endpoint_stays_public(self):
+        self.client.post("/logout")
+        self.assertEqual(self.client.get("/api/health").json, {"status": "ok"})
+
+    def test_users_cannot_see_each_others_receipts(self):
+        response = self.client.post("/receipts/process")
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+        self.assertEqual(
+            self.client.get(f"/receipts/{receipt_id}/review").status_code, 200
+        )
+
+        self.client.post("/logout")
+        self.client.post(
+            "/register",
+            data={
+                "username": "outra_pessoa",
+                "password": "outrasenha1",
+                "confirm_password": "outrasenha1",
+            },
+        )
+        other_review = self.client.get(f"/receipts/{receipt_id}/review")
+        self.assertEqual(other_review.status_code, 404)
+
+        with self.app.app_context():
+            db = get_db()
+            count_for_second_user = db.execute(
+                """
+                SELECT COUNT(*) FROM receipts
+                WHERE user_id = (SELECT id FROM users WHERE username = 'outra_pessoa')
+                """
+            ).fetchone()[0]
+        self.assertEqual(count_for_second_user, 0)
 
 
 if __name__ == "__main__":

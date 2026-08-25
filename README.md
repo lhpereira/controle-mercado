@@ -375,6 +375,7 @@ controle-mercado/
 │   └── seed_compras.json       # histórico inicial
 ├── mercado/
 │   ├── __init__.py             # fábrica da aplicação e configurações
+│   ├── auth.py                 # login, cadastro, logout e login_required
 │   ├── routes.py               # páginas, formulários e APIs
 │   ├── db.py                   # conexão, schema e migrações
 │   ├── schema.sql              # tabelas e índices
@@ -382,6 +383,8 @@ controle-mercado/
 │   ├── worker.py               # consumidor da fila de recibos
 │   ├── services/
 │   │   ├── analytics.py        # dados do painel
+│   │   ├── auth.py             # criação e verificação de usuários
+│   │   ├── fiscal_compare.py   # comparação OCR × NFC-e
 │   │   ├── llm_ocr.py          # conectores OpenAI e Ollama
 │   │   ├── nfce.py             # consulta segura da NFC-e
 │   │   ├── ocr.py              # orquestração OCR, LLM e QR Code
@@ -392,7 +395,9 @@ controle-mercado/
 │   ├── templates/              # páginas HTML/Jinja
 │   └── static/                 # CSS e JavaScript
 └── tests/
-    ├── test_app.py             # fluxos web, fila e idempotência
+    ├── test_app.py             # fluxos web, fila, idempotência e autenticação
+    ├── test_auth.py            # criação de usuários e herança de dados legados
+    ├── test_fiscal_compare.py  # comparação OCR × NFC-e
     ├── test_llm_ocr.py         # conectores, recortes e validações
     └── test_parser.py          # interpretação das linhas
 ```
@@ -401,6 +406,9 @@ controle-mercado/
 
 | Rota | Finalidade |
 |---|---|
+| `/register` | criação de conta |
+| `/login` | entrada na aplicação |
+| `/logout` | encerramento da sessão |
 | `/` | painel analítico |
 | `/receipts` | histórico e estados dos cupons |
 | `/receipts/new` | formulário de entrada |
@@ -463,7 +471,7 @@ Execute na raiz do projeto ou dentro do container:
 python -m unittest discover -s tests -v
 ```
 
-Os 18 testes cobrem parser, colunas fixas, códigos PLU, OCR híbrido, conectores OpenAI/Ollama, adaptador `glm-ocr`, substituição do fallback completo, recortes das linhas, contexto por requisição, fila assíncrona, falhas, nova tentativa e prevenção de duplicidades.
+Os testes cobrem parser, colunas fixas, códigos PLU, OCR híbrido, conectores OpenAI/Ollama, adaptador `glm-ocr`, substituição do fallback completo, recortes das linhas, contexto por requisição, fila assíncrona, falhas, nova tentativa, prevenção de duplicidades, reprocessamento com outro motor, comparação fiscal e autenticação com isolamento de dados por usuário.
 
 ## Diagnóstico
 
@@ -501,6 +509,15 @@ docker compose up --build -d
 
 Depois use `Ctrl+F5` na página.
 
+## Autenticação
+
+A aplicação exige login. O cadastro em `/register` é aberto a quem tiver acesso à URL — mantenha a porta exposta apenas em rede confiável.
+
+- cada usuário só vê seus próprios cupons, painel e histórico de preços;
+- o catálogo de `/products` (nomes, categorias, marca) é compartilhado entre todos os usuários, para reaproveitar o que já foi cadastrado ao comprar no mesmo mercado;
+- ao criar a primeira conta, cupons e produtos que já existiam no banco (incluindo o histórico importado do seed) passam a pertencer a esse usuário automaticamente;
+- a senha é validada com hash (`werkzeug.security`); não há verificação de e-mail nem recuperação de senha — perder a senha exige redefini-la diretamente no banco.
+
 ## Segurança e privacidade
 
 - não publique o `.env` nem chaves de API;
@@ -508,7 +525,7 @@ Depois use `Ctrl+F5` na página.
 - no modo OpenAI, a imagem ou os recortes são enviados ao provedor externo;
 - no modo Ollama e no modo `rapidocr`, o processamento visual permanece local;
 - a consulta da NFC-e utiliza uma lista explícita de domínios para reduzir risco de acesso indevido a endereços internos;
-- a aplicação ainda não possui autenticação; exponha a porta somente em uma rede confiável.
+- defina um `SECRET_KEY` próprio em produção; o valor padrão é apenas para desenvolvimento e assina os cookies de sessão.
 
 ## Limitações atuais
 
@@ -521,8 +538,5 @@ Depois use `Ctrl+F5` na página.
 ## Próximas evoluções sugeridas
 
 - adaptadores de consulta da NFC-e por estado;
-- comparação automática entre dados fiscais e OCR;
-- botão para reprocessar um rascunho com outro motor;
-- autenticação e separação por usuário;
 - backup e exportação dos dados;
 - PostgreSQL e fila dedicada para maior concorrência.
