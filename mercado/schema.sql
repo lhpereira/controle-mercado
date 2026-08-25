@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS receipts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
+    user_id INTEGER REFERENCES users(id),
     source_type TEXT NOT NULL DEFAULT 'manual',
     image_path TEXT,
     qr_url TEXT,
@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS receipts (
 
 CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
     barcode TEXT,
     merchant_cnpj TEXT NOT NULL DEFAULT '',
     canonical_name TEXT NOT NULL,

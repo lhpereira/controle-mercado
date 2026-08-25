@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from mercado import create_app
 from mercado.db import get_db
+from mercado.services.auth import create_user
 from mercado.worker import process_one
 
 
@@ -134,6 +135,33 @@ class AppTest(unittest.TestCase):
         self.assertIn("extraction_source", item_columns)
         self.assertIn("uncertain_fields", item_columns)
         self.assertIn("merchant_cnpj", product_columns)
+
+    def test_products_are_private_to_their_owner(self):
+        with self.app.app_context():
+            db = get_db()
+            other_id = create_user(db, "outra_pessoa", "senha1234")
+            receipt_id = db.execute(
+                "INSERT INTO receipts (user_id, source_type, status) VALUES (?, 'manual', 'confirmed')",
+                (other_id,),
+            ).lastrowid
+            product_id = db.execute(
+                "INSERT INTO products (user_id, canonical_name) VALUES (?, 'Produto de outra pessoa')",
+                (other_id,),
+            ).lastrowid
+            db.execute(
+                "INSERT INTO receipt_items (receipt_id, product_id, description, item_total) VALUES (?, ?, 'Produto de outra pessoa', 9.90)",
+                (receipt_id, product_id),
+            )
+            db.commit()
+
+        own_products = self.client.get("/products")
+        self.assertNotIn(b"Produto de outra pessoa", own_products.data)
+        self.assertEqual(self.client.post(f"/products/{product_id}", data={}).status_code, 404)
+
+        self.client.post("/logout")
+        self.client.post("/login", data={"username": "outra_pessoa", "password": "senha1234"})
+        other_products = self.client.get("/products")
+        self.assertIn(b"Produto de outra pessoa", other_products.data)
 
     @patch("mercado.worker.process_image")
     def test_image_flow_is_async_idempotent_and_shows_source(self, process_image):

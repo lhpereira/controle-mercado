@@ -115,7 +115,7 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
     return receipt_id
 
 
-def enrich_items_from_catalog(parsed: dict) -> None:
+def enrich_items_from_catalog(parsed: dict, user_id: int) -> None:
     """Reaproveita a descrição revisada quando o Cod já existe no catálogo."""
 
     db = get_db()
@@ -125,8 +125,8 @@ def enrich_items_from_catalog(parsed: dict) -> None:
             continue
         scope = product_scope(code, parsed.get("merchant_cnpj"))
         product = db.execute(
-            "SELECT canonical_name, category FROM products WHERE merchant_cnpj = ? AND barcode = ?",
-            (scope, code),
+            "SELECT canonical_name, category FROM products WHERE user_id = ? AND merchant_cnpj = ? AND barcode = ?",
+            (user_id, scope, code),
         ).fetchone()
         if product:
             item["description"] = product["canonical_name"]
@@ -485,8 +485,8 @@ def save_receipt(receipt_id: int):
         scope = product_scope(code, request.form.get("merchant_cnpj"))
         product = (
             db.execute(
-                "SELECT * FROM products WHERE merchant_cnpj = ? AND barcode = ?",
-                (scope, code),
+                "SELECT * FROM products WHERE user_id = ? AND merchant_cnpj = ? AND barcode = ?",
+                (g.user["id"], scope, code),
             ).fetchone()
             if code
             else None
@@ -500,8 +500,8 @@ def save_receipt(receipt_id: int):
                 )
         else:
             product_id = db.execute(
-                "INSERT INTO products (barcode, merchant_cnpj, canonical_name, category) VALUES (?, ?, ?, ?)",
-                (code or None, scope, description, category),
+                "INSERT INTO products (user_id, barcode, merchant_cnpj, canonical_name, category) VALUES (?, ?, ?, ?, ?)",
+                (g.user["id"], code or None, scope, description, category),
             ).lastrowid
         db.execute(
             """
@@ -566,12 +566,17 @@ def receipt_image(receipt_id: int):
 def products():
     rows = get_db().execute(
         """
-        SELECT p.*, COUNT(i.id) AS purchases, COALESCE(SUM(i.item_total), 0) AS spend
+        SELECT p.*, COUNT(r.id) AS purchases,
+            COALESCE(SUM(CASE WHEN r.id IS NOT NULL THEN i.item_total ELSE 0 END), 0) AS spend
         FROM products p
         LEFT JOIN receipt_items i ON i.product_id = p.id
+        LEFT JOIN receipts r ON r.id = i.receipt_id AND r.user_id = ?
+        WHERE p.user_id = ?
         GROUP BY p.id
         ORDER BY p.canonical_name
         """
+        ,
+        (g.user["id"], g.user["id"]),
     ).fetchall()
     return render_template("products.html", products=rows, categories=CATEGORIES)
 
@@ -580,14 +585,16 @@ def products():
 @login_required
 def update_product(product_id: int):
     db = get_db()
-    if not db.execute("SELECT id FROM products WHERE id = ?", (product_id,)).fetchone():
+    if not db.execute(
+        "SELECT id FROM products WHERE id = ? AND user_id = ?", (product_id, g.user["id"])
+    ).fetchone():
         abort(404)
     db.execute(
         """
         UPDATE products SET canonical_name = ?, brand = ?, category = ?,
             subcategory = ?, package_quantity = ?, package_unit = ?,
             units_per_package = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
         (
             request.form.get("canonical_name"),
@@ -599,6 +606,7 @@ def update_product(product_id: int):
             float(decimal_br(request.form.get("units_per_package"))) or 1,
             request.form.get("notes"),
             product_id,
+            g.user["id"],
         ),
     )
     db.commit()

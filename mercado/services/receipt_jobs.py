@@ -57,7 +57,7 @@ def claim_next_receipt(db: sqlite3.Connection, stale_minutes: int = 20) -> dict 
     )
     row = db.execute(
         """
-        SELECT id, image_path, ocr_mode
+        SELECT id, user_id, image_path, ocr_mode
         FROM receipts
         WHERE status = 'queued' AND source_type = 'imagem'
         ORDER BY id

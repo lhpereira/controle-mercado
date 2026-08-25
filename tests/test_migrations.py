@@ -1,7 +1,9 @@
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 from mercado import create_app
 
@@ -108,6 +110,7 @@ class LegacyMigrationTest(unittest.TestCase):
                 "SELECT description FROM receipt_items WHERE receipt_id = 1"
             ).fetchone()
             self.assertEqual(item["description"], "Produto Antigo")
+            conn.close()
 
     def test_boot_is_idempotent_across_repeated_restarts(self):
         for _ in range(3):
@@ -119,6 +122,7 @@ class LegacyMigrationTest(unittest.TestCase):
         self.assertIn("user_id", columns)
         row = conn.execute("SELECT merchant_name FROM receipts WHERE id = 1").fetchone()
         self.assertEqual(row["merchant_name"], "Mercado Antigo")
+        conn.close()
 
     def test_foreign_keys_still_enforced_after_migration(self):
         app = self._create_app()
@@ -135,6 +139,81 @@ class LegacyMigrationTest(unittest.TestCase):
                 "SELECT COUNT(*) FROM receipt_items WHERE receipt_id = 1"
             ).fetchone()[0]
             self.assertEqual(items_after, 0)
+            conn.close()
+
+    def test_owner_integrity_is_enforced_for_legacy_tables(self):
+        app = self._create_app()
+        with app.app_context():
+            conn = sqlite3.connect(self.db_path)
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO receipts (user_id, source_type, status) VALUES (999, 'manual', 'draft')"
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO products (user_id, canonical_name) VALUES (999, 'Produto inválido')"
+                )
+            conn.close()
+
+    def test_migration_splits_a_shared_legacy_product_by_owner(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript(
+            """
+            ALTER TABLE receipts ADD COLUMN user_id INTEGER;
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.execute("INSERT INTO users (id, username, password_hash) VALUES (1, 'dono1', 'hash')")
+        conn.execute("INSERT INTO users (id, username, password_hash) VALUES (2, 'dono2', 'hash')")
+        conn.execute("UPDATE receipts SET user_id = 1 WHERE id = 1")
+        second_receipt = conn.execute(
+            "INSERT INTO receipts (user_id, source_type, status) VALUES (2, 'manual', 'confirmed')"
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO receipt_items (receipt_id, product_id, description, item_total) VALUES (?, 1, 'Produto Antigo', 12.50)",
+            (second_receipt,),
+        )
+        conn.commit()
+        conn.close()
+
+        self._create_app()
+
+        conn = sqlite3.connect(self.db_path)
+        product_rows = conn.execute(
+            "SELECT id, user_id FROM products WHERE canonical_name = 'Produto Antigo' ORDER BY user_id"
+        ).fetchall()
+        self.assertEqual([(row[1]) for row in product_rows], [1, 2])
+        item_rows = conn.execute(
+            """
+            SELECT r.user_id, i.product_id
+            FROM receipt_items i JOIN receipts r ON r.id = i.receipt_id
+            ORDER BY r.user_id
+            """
+        ).fetchall()
+        self.assertEqual([row[1] for row in item_rows], [row[0] for row in product_rows])
+        conn.close()
+
+    def test_concurrent_boots_share_one_migration_lock(self):
+        barrier = Barrier(2)
+
+        def boot():
+            barrier.wait()
+            self._create_app()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(boot) for _ in range(2)]
+            for future in futures:
+                future.result(timeout=35)
+
+        conn = sqlite3.connect(self.db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}
+        self.assertIn("user_id", columns)
+        conn.close()
 
 
 if __name__ == "__main__":
