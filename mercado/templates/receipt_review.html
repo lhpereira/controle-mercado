@@ -11,6 +11,20 @@
       <div class="card-head"><div><h2>Fonte</h2><div class="subtitle">{{ receipt.source_type }}</div></div></div>
       {% if receipt.image_path %}<img src="{{ url_for('main.receipt_image', receipt_id=receipt.id) }}" alt="Imagem do cupom">{% else %}<div class="empty">Cadastro sem imagem.</div>{% endif %}
       {% if receipt.raw_text %}<details style="margin-top:12px"><summary>Ver texto extraído</summary><pre class="ocr-text">{{ receipt.raw_text }}</pre></details>{% endif %}
+      {% if receipt.image_path and receipt.source_type == 'imagem' %}
+      <form method="post" action="{{ url_for('main.reprocess_receipt_route', receipt_id=receipt.id) }}" onsubmit="return confirm('Reprocessar substitui os itens extraídos atualmente pela leitura do motor escolhido. Continuar?')" style="margin-top:12px">
+        <div class="field full">
+          <label for="reprocess_mode">Reprocessar com outro motor</label>
+          <select id="reprocess_mode" name="ocr_mode">
+            <option value="hybrid" {% if receipt.ocr_mode == 'hybrid' %}selected{% endif %}>Híbrido — OCR local e {{ llm_provider|capitalize }} nas dúvidas</option>
+            <option value="rapidocr" {% if receipt.ocr_mode == 'rapidocr' %}selected{% endif %}>Somente OCR local</option>
+            <option value="openai" {% if receipt.ocr_mode == 'openai' %}selected{% endif %}>Somente OpenAI</option>
+            <option value="ollama" {% if receipt.ocr_mode == 'ollama' %}selected{% endif %}>Somente Ollama local</option>
+          </select>
+        </div>
+        <button class="button secondary" type="submit" style="margin-top:8px">Reprocessar cupom</button>
+      </form>
+      {% endif %}
     </aside>
     <div>
       <section class="card">
