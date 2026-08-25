@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS receipts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    user_id INTEGER,
     source_type TEXT NOT NULL DEFAULT 'manual',
     image_path TEXT,
     qr_url TEXT,
@@ -80,4 +80,3 @@ CREATE INDEX IF NOT EXISTS idx_items_receipt ON receipt_items(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_items_product ON receipt_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_purchased_at ON receipts(purchased_at);
 CREATE INDEX IF NOT EXISTS idx_receipts_cnpj ON receipts(merchant_cnpj);
-CREATE INDEX IF NOT EXISTS idx_receipts_user ON receipts(user_id);

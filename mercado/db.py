@@ -24,8 +24,20 @@ def close_db(_error=None) -> None:
 
 def init_db() -> None:
     db = get_db()
+    # Em bancos já existentes, executescript() rodando várias instruções
+    # CREATE TABLE IF NOT EXISTS com chaves estrangeiras para tabelas que já
+    # existem deixa o SQLite reportando colunas que na verdade ainda não
+    # foram criadas (PRAGMA table_info e até ALTER TABLE se comportam como
+    # se elas já existissem). Executar uma instrução por vez evita esse
+    # problema; desligar a checagem de FK durante a migração é uma segunda
+    # camada de proteção contra a mesma inconsistência.
+    db.execute("PRAGMA foreign_keys = OFF")
     with current_app.open_resource("schema.sql") as schema:
-        db.executescript(schema.read().decode("utf-8"))
+        content = schema.read().decode("utf-8")
+    for statement in content.split(";"):
+        statement = statement.strip()
+        if statement:
+            db.execute(statement)
     migrations = {
         "receipts": {
             "user_id": "INTEGER",
@@ -71,6 +83,7 @@ def init_db() -> None:
     )
     db.execute("CREATE INDEX IF NOT EXISTS idx_receipts_user ON receipts(user_id)")
     db.commit()
+    db.execute("PRAGMA foreign_keys = ON")
 
 
 def init_app(app) -> None:
