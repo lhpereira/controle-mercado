@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS receipts (
     ocr_mode TEXT,
     processing_started_at TEXT,
     processing_error TEXT,
+    fiscal_status TEXT,
+    fiscal_differences TEXT,
+    fiscal_checked_at TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

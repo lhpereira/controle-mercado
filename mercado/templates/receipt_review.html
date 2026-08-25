@@ -45,6 +45,41 @@
           <div class="field full"><label>Chave de acesso</label><input name="access_key" value="{{ receipt.access_key or '' }}"></div>
         </div>
       </section>
+      {% if receipt.qr_url and receipt.source_type == 'imagem' %}
+      <section class="card" style="margin-top:15px">
+        <div class="card-head">
+          <div><h2>Comparação com a NFC-e</h2><div class="subtitle">Confere os dados extraídos com o portal fiscal oficial</div></div>
+          {% if receipt.fiscal_status == 'matched' %}<span class="badge confirmed">Dados conferem</span>
+          {% elif receipt.fiscal_status == 'diverging' %}<span class="badge warn">{{ fiscal_differences|length }} divergência(s)</span>
+          {% elif receipt.fiscal_status == 'unavailable' %}<span class="badge failed">Consulta indisponível</span>
+          {% else %}<span class="badge">Ainda não verificado</span>{% endif %}
+        </div>
+        {% if receipt.fiscal_status == 'diverging' and fiscal_differences %}
+        <div class="table-wrap" style="max-height:260px">
+          <table>
+            <thead><tr><th>Campo</th><th>Cupom / revisão</th><th>NFC-e</th></tr></thead>
+            <tbody>
+              {% for diff in fiscal_differences %}
+              <tr><td>{{ diff.label }}</td><td>{{ diff.ocr }}</td><td>{{ diff.fiscal }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% elif receipt.fiscal_status == 'matched' %}
+        <div class="note">Nenhuma divergência encontrada entre a leitura do cupom e a NFC-e.</div>
+        {% elif receipt.fiscal_status == 'unavailable' %}
+        <div class="note">O portal fiscal não pôde ser consultado da última vez. Tente novamente mais tarde.</div>
+        {% endif %}
+        {% if receipt.fiscal_checked_at %}<div class="note" style="margin-top:8px">Última verificação: {{ receipt.fiscal_checked_at }}</div>{% endif %}
+        {% if nfc_fetch_enabled %}
+        <form method="post" action="{{ url_for('main.verify_fiscal_data', receipt_id=receipt.id) }}" style="margin-top:12px">
+          <button class="button secondary" type="submit">{{ 'Verificar novamente' if receipt.fiscal_status else 'Verificar com a NFC-e' }}</button>
+        </form>
+        {% else %}
+        <div class="note" style="margin-top:12px">A consulta automática ao portal fiscal está desativada nesta instância.</div>
+        {% endif %}
+      </section>
+      {% endif %}
       <section class="card" style="margin-top:15px">
         <div class="card-head"><div><h2>Itens</h2><div class="subtitle">Corrija descrições, valores, descontos e categorias</div></div><button type="button" class="button secondary" id="addRow">+ Adicionar item</button></div>
         {% if ocr_warnings %}

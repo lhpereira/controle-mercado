@@ -91,6 +91,9 @@ class AppTest(unittest.TestCase):
             }
         self.assertIn("ocr_method", receipt_columns)
         self.assertIn("ocr_warnings", receipt_columns)
+        self.assertIn("fiscal_status", receipt_columns)
+        self.assertIn("fiscal_differences", receipt_columns)
+        self.assertIn("fiscal_checked_at", receipt_columns)
         self.assertIn("extraction_source", item_columns)
         self.assertIn("uncertain_fields", item_columns)
         self.assertIn("merchant_cnpj", product_columns)
@@ -250,6 +253,103 @@ class AppTest(unittest.TestCase):
         )
         self.assertEqual(invalid.status_code, 302)
         self.assertIn("/review", invalid.headers["Location"])
+
+    @patch("mercado.worker.check_fiscal_data")
+    @patch("mercado.worker.process_image")
+    def test_image_receipt_is_compared_with_fiscal_data_when_enabled(
+        self, process_image, check_fiscal_data
+    ):
+        self.app.config["NFC_FETCH_ENABLED"] = True
+        process_image.return_value = {
+            "merchant_name": "Mercado Teste",
+            "qr_url": "https://www.dfe.ms.gov.br/nfce/consulta",
+            "ocr_method": "rapidocr",
+            "ocr_warnings": [],
+            "items": [],
+        }
+        check_fiscal_data.return_value = {
+            "fiscal_status": "diverging",
+            "fiscal_differences": [
+                {
+                    "field": "subtotal",
+                    "label": "Subtotal",
+                    "ocr": "R$ 5,00",
+                    "fiscal": "R$ 6,00",
+                }
+            ],
+        }
+        submission_id = str(uuid.uuid4())
+        response = self.client.post(
+            "/receipts/process",
+            data={
+                "submission_id": submission_id,
+                "ocr_mode": "rapidocr",
+                "receipt_image": (io.BytesIO(b"fake-image"), "cupom.jpg"),
+            },
+            content_type="multipart/form-data",
+        )
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+        self.assertTrue(process_one(self.app))
+        check_fiscal_data.assert_called_once()
+
+        with self.app.app_context():
+            db = get_db()
+            row = db.execute(
+                "SELECT fiscal_status, fiscal_differences, fiscal_checked_at FROM receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+        self.assertEqual(row["fiscal_status"], "diverging")
+        self.assertIsNotNone(row["fiscal_checked_at"])
+        self.assertIn("Subtotal", row["fiscal_differences"])
+
+        review = self.client.get(f"/receipts/{receipt_id}/review")
+        rendered = unescape(review.get_data(as_text=True))
+        self.assertIn("divergência", rendered)
+        self.assertIn("Subtotal", rendered)
+
+    @patch("mercado.routes.check_fiscal_data")
+    def test_manual_fiscal_verification_updates_status(self, check_fiscal_data):
+        self.app.config["NFC_FETCH_ENABLED"] = True
+        check_fiscal_data.return_value = {
+            "fiscal_status": "matched",
+            "fiscal_differences": [],
+        }
+        response = self.client.post("/receipts/process")
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+        self.client.post(
+            f"/receipts/{receipt_id}/save",
+            data={
+                "action": "draft",
+                "merchant_name": "Mercado Teste",
+                "qr_url": "https://www.dfe.ms.gov.br/nfce/consulta",
+                "subtotal": "10,00",
+                "discount_total": "0",
+                "total_paid": "10,00",
+            },
+        )
+
+        verify = self.client.post(f"/receipts/{receipt_id}/verify-fiscal")
+        self.assertEqual(verify.status_code, 302)
+        check_fiscal_data.assert_called_once()
+        with self.app.app_context():
+            db = get_db()
+            status = db.execute(
+                "SELECT fiscal_status FROM receipts WHERE id = ?", (receipt_id,)
+            ).fetchone()["fiscal_status"]
+        self.assertEqual(status, "matched")
+
+    def test_fiscal_verification_requires_qr_url_and_enabled_flag(self):
+        response = self.client.post("/receipts/process")
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+
+        no_qr = self.client.post(f"/receipts/{receipt_id}/verify-fiscal")
+        self.assertEqual(no_qr.status_code, 302)
+        with self.app.app_context():
+            db = get_db()
+            status = db.execute(
+                "SELECT fiscal_status FROM receipts WHERE id = ?", (receipt_id,)
+            ).fetchone()["fiscal_status"]
+        self.assertIsNone(status)
 
 
 if __name__ == "__main__":

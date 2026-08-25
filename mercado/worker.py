@@ -7,6 +7,7 @@ from pathlib import Path
 from . import create_app
 from .db import get_db
 from .routes import enrich_items_from_catalog
+from .services.nfce import check_fiscal_data
 from .services.ocr import process_image
 from .services.receipt_jobs import claim_next_receipt, fail_receipt, finalize_receipt
 
@@ -36,6 +37,12 @@ def process_one(app) -> bool:
             mode=job["ocr_mode"] or app.config["OCR_PROVIDER"],
             llm_settings=app.config,
         )
+        if app.config.get("NFC_FETCH_ENABLED"):
+            fiscal_result = check_fiscal_data(parsed, app.config["NFC_ALLOWED_HOSTS"])
+            parsed["fiscal_status"] = fiscal_result["fiscal_status"]
+            parsed["fiscal_differences"] = fiscal_result["fiscal_differences"]
+            if fiscal_result.get("fiscal_warning"):
+                parsed["ocr_warnings"].append(fiscal_result["fiscal_warning"])
         with app.app_context():
             enrich_items_from_catalog(parsed)
             finalize_receipt(get_db(), receipt_id, parsed)

@@ -22,7 +22,7 @@ from werkzeug.utils import secure_filename
 from .categories import CATEGORIES, infer_category
 from .db import get_db
 from .services.analytics import analytics_rows, filter_options
-from .services.nfce import UnsafeReceiptURL, fetch_nfce
+from .services.nfce import UnsafeReceiptURL, check_fiscal_data, fetch_nfce
 from .services.parser import decimal_br
 from .services.receipt_jobs import (
     enqueue_image_receipt,
@@ -231,6 +231,10 @@ def review_receipt(receipt_id: int):
         ocr_warnings = json.loads(receipt["ocr_warnings"] or "[]")
     except (TypeError, json.JSONDecodeError):
         ocr_warnings = [receipt["ocr_warnings"]] if receipt["ocr_warnings"] else []
+    try:
+        fiscal_differences = json.loads(receipt["fiscal_differences"] or "null")
+    except (TypeError, json.JSONDecodeError):
+        fiscal_differences = None
     return render_template(
         "receipt_review.html",
         receipt=receipt,
@@ -238,6 +242,8 @@ def review_receipt(receipt_id: int):
         categories=CATEGORIES,
         ocr_stats=ocr_stats,
         ocr_warnings=ocr_warnings,
+        fiscal_differences=fiscal_differences,
+        nfc_fetch_enabled=current_app.config["NFC_FETCH_ENABLED"],
         llm_provider=current_app.config["LLM_PROVIDER"],
     )
 
@@ -285,6 +291,55 @@ def reprocess_receipt_route(receipt_id: int):
         flash("Cupom enviado para reprocessamento com outro motor.", "success")
         return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
     flash("Não foi possível reprocessar este cupom.", "error")
+    return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
+
+
+@bp.post("/receipts/<int:receipt_id>/verify-fiscal")
+def verify_fiscal_data(receipt_id: int):
+    receipt = get_receipt(receipt_id)
+    if not receipt["qr_url"]:
+        flash("Este cupom não possui QR Code de NFC-e para comparar.", "error")
+        return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
+    if not current_app.config["NFC_FETCH_ENABLED"]:
+        flash("A consulta automática ao portal fiscal está desativada.", "error")
+        return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
+
+    db = get_db()
+    items = db.execute(
+        "SELECT * FROM receipt_items WHERE receipt_id = ? ORDER BY line_number, id",
+        (receipt_id,),
+    ).fetchall()
+    snapshot = {
+        "qr_url": receipt["qr_url"],
+        "merchant_cnpj": receipt["merchant_cnpj"],
+        "subtotal": receipt["subtotal"],
+        "discount_total": receipt["discount_total"],
+        "total_paid": receipt["total_paid"],
+        "reported_item_count": receipt["reported_item_count"],
+        "items": [dict(item) for item in items],
+    }
+    result = check_fiscal_data(snapshot, current_app.config["NFC_ALLOWED_HOSTS"])
+    differences = result.get("fiscal_differences")
+    db.execute(
+        """
+        UPDATE receipts
+        SET fiscal_status = ?, fiscal_differences = ?, fiscal_checked_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            result["fiscal_status"],
+            json.dumps(differences, ensure_ascii=False) if differences is not None else None,
+            receipt_id,
+        ),
+    )
+    db.commit()
+    if result.get("fiscal_warning"):
+        flash(result["fiscal_warning"], "error")
+    elif result["fiscal_status"] == "matched":
+        flash("Os dados conferem com a NFC-e.", "success")
+    else:
+        flash(f"{len(differences)} divergência(s) encontradas com a NFC-e.", "error")
     return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
 
 
