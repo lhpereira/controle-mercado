@@ -384,6 +384,7 @@ controle-mercado/
 │   ├── services/
 │   │   ├── analytics.py        # dados do painel
 │   │   ├── auth.py             # criação e verificação de usuários
+│   │   ├── export.py           # payload de backup/exportação por usuário
 │   │   ├── fiscal_compare.py   # comparação OCR × NFC-e
 │   │   ├── llm_ocr.py          # conectores OpenAI e Ollama
 │   │   ├── nfce.py             # consulta segura da NFC-e
@@ -415,6 +416,8 @@ controle-mercado/
 | `/receipts/<id>/processing` | acompanhamento do worker |
 | `/receipts/<id>/review` | revisão e confirmação |
 | `/products` | catálogo de produtos |
+| `/export/receipts.json` | backup completo dos cupons do usuário (JSON) |
+| `/export/receipts.csv` | exportação dos itens comprados (CSV) |
 | `/api/receipts/<id>/status` | estado do processamento |
 | `/api/analytics` | dados filtrados do painel |
 | `/api/health` | verificação de saúde da aplicação |
@@ -518,6 +521,15 @@ A aplicação exige login. O cadastro em `/register` é aberto a quem tiver aces
 - ao criar a primeira conta, cupons e produtos que já existiam no banco (incluindo o histórico importado do seed) passam a pertencer a esse usuário automaticamente;
 - a senha é validada com hash (`werkzeug.security`); não há verificação de e-mail nem recuperação de senha — perder a senha exige redefini-la diretamente no banco.
 
+## Backup e exportação
+
+Em **Cupons**, os botões **Exportar JSON** e **Exportar CSV** baixam os dados do usuário logado:
+
+- `/export/receipts.json` é o backup completo: todos os cupons (qualquer status) com seus itens, mais os produtos do catálogo compartilhado que foram referenciados por eles — dá para reconstruir o histórico a partir desse arquivo;
+- `/export/receipts.csv` é uma exportação tabular (uma linha por item comprado), pronta para abrir em planilha.
+
+Cada usuário só exporta os próprios dados. Não há importação automática desses arquivos de volta para a aplicação; a restauração, se necessária, é manual.
+
 ## Segurança e privacidade
 
 - não publique o `.env` nem chaves de API;
@@ -538,5 +550,4 @@ A aplicação exige login. O cadastro em `/register` é aberto a quem tiver aces
 ## Próximas evoluções sugeridas
 
 - adaptadores de consulta da NFC-e por estado;
-- backup e exportação dos dados;
 - PostgreSQL e fila dedicada para maior concorrência.

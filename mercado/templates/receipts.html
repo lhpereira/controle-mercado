@@ -3,7 +3,11 @@
 {% block content %}
 <div class="page-head">
   <div><div class="eyebrow">Histórico</div><h1>Cupons registrados</h1><p>Rascunhos não entram no painel até serem confirmados.</p></div>
-  <a class="button" href="{{ url_for('main.new_receipt') }}">+ Novo cupom</a>
+  <div class="inline-actions">
+    <a class="button ghost" href="{{ url_for('main.export_receipts_json') }}">Exportar JSON</a>
+    <a class="button ghost" href="{{ url_for('main.export_receipts_csv') }}">Exportar CSV</a>
+    <a class="button" href="{{ url_for('main.new_receipt') }}">+ Novo cupom</a>
+  </div>
 </div>
 <section class="receipt-list">
 {% for receipt in receipts %}
