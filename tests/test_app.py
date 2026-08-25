@@ -36,6 +36,34 @@ class AppTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _create_confirmed_receipt(self):
+        response = self.client.post("/receipts/process")
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+        self.client.post(
+            f"/receipts/{receipt_id}/save",
+            data={
+                "action": "confirm",
+                "merchant_name": "Mercado Teste",
+                "merchant_cnpj": "00.000.000/0001-00",
+                "purchased_at": "2026-05-23T20:08",
+                "reported_item_count": "1",
+                "subtotal": "8,49",
+                "discount_total": "0",
+                "total_paid": "8,49",
+                "payment_method": "Débito",
+                "item_code[]": ["7892840800000"],
+                "description[]": ["REFRIG PEPSI COLA 2L"],
+                "quantity[]": ["1"],
+                "unit[]": ["UN"],
+                "unit_price[]": ["8,49"],
+                "gross_total[]": ["8,49"],
+                "discount[]": ["0"],
+                "item_total[]": ["8,49"],
+                "category[]": ["Bebidas sem álcool"],
+            },
+        )
+        return receipt_id
+
     def test_health_and_pages(self):
         self.assertEqual(self.client.get("/api/health").json, {"status": "ok"})
         self.assertEqual(self.client.get("/").status_code, 200)
@@ -441,6 +469,49 @@ class AppTest(unittest.TestCase):
                 """
             ).fetchone()[0]
         self.assertEqual(count_for_second_user, 0)
+
+    def test_export_json_contains_only_current_user_receipts(self):
+        receipt_id = self._create_confirmed_receipt()
+
+        response = self.client.get("/export/receipts.json")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response.headers["Content-Disposition"])
+        data = response.json
+        self.assertEqual(data["username"], "tester")
+        exported = next(r for r in data["receipts"] if r["id"] == receipt_id)
+        self.assertEqual(len(exported["items"]), 1)
+        self.assertEqual(exported["items"][0]["description"], "REFRIG PEPSI COLA 2L")
+        self.assertTrue(any(p["barcode"] == "7892840800000" for p in data["products"]))
+
+        self.client.post("/logout")
+        self.client.post(
+            "/register",
+            data={
+                "username": "outra_pessoa",
+                "password": "outrasenha1",
+                "confirm_password": "outrasenha1",
+            },
+        )
+        other = self.client.get("/export/receipts.json").json
+        self.assertEqual(other["receipts"], [])
+        self.assertEqual(other["products"], [])
+
+    def test_export_csv_contains_item_rows(self):
+        self._create_confirmed_receipt()
+
+        response = self.client.get("/export/receipts.csv")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "text/csv; charset=utf-8")
+        self.assertIn("attachment", response.headers["Content-Disposition"])
+        body = response.get_data(as_text=True)
+        self.assertIn("cupom_id,status,estabelecimento", body)
+        self.assertIn("REFRIG PEPSI COLA 2L", body)
+
+    def test_export_requires_login(self):
+        self.client.post("/logout")
+        response = self.client.get("/export/receipts.json")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import (
@@ -24,6 +27,7 @@ from .auth import login_required
 from .categories import CATEGORIES, infer_category
 from .db import get_db
 from .services.analytics import analytics_rows, filter_options
+from .services.export import export_receipts_payload
 from .services.nfce import UnsafeReceiptURL, check_fiscal_data, fetch_nfce
 from .services.parser import decimal_br
 from .services.receipt_jobs import (
@@ -160,6 +164,66 @@ def receipts():
         (g.user["id"],),
     ).fetchall()
     return render_template("receipts.html", receipts=rows)
+
+
+@bp.route("/export/receipts.json")
+@login_required
+def export_receipts_json():
+    payload = export_receipts_payload(get_db(), g.user["id"])
+    stamp = datetime.now(timezone.utc)
+    response = jsonify(
+        {
+            "exported_at": stamp.isoformat(),
+            "username": g.user["username"],
+            "receipts": payload["receipts"],
+            "products": payload["products"],
+        }
+    )
+    filename = f"controle-mercado-{g.user['username']}-{stamp:%Y%m%d}.json"
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@bp.route("/export/receipts.csv")
+@login_required
+def export_receipts_csv():
+    payload = export_receipts_payload(get_db(), g.user["id"])
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "cupom_id", "status", "estabelecimento", "cnpj", "data_hora",
+            "linha", "codigo", "descricao", "quantidade", "unidade",
+            "preco_unitario", "valor_bruto", "desconto", "valor_total", "categoria",
+        ]
+    )
+    for receipt in payload["receipts"]:
+        for item in receipt["items"]:
+            writer.writerow(
+                [
+                    receipt["id"],
+                    receipt["status"],
+                    receipt.get("merchant_name") or "",
+                    receipt.get("merchant_cnpj") or "",
+                    receipt.get("purchased_at") or "",
+                    item.get("line_number"),
+                    item.get("item_code") or "",
+                    item.get("description"),
+                    item.get("quantity"),
+                    item.get("unit"),
+                    item.get("unit_price"),
+                    item.get("gross_total"),
+                    item.get("discount"),
+                    item.get("item_total"),
+                    item.get("category_snapshot") or "",
+                ]
+            )
+    stamp = datetime.now(timezone.utc)
+    response = make_response(buffer.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    filename = f"controle-mercado-{g.user['username']}-{stamp:%Y%m%d}.csv"
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 @bp.route("/receipts/new")
