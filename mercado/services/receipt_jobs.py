@@ -78,6 +78,8 @@ def claim_next_receipt(db: sqlite3.Connection, stale_minutes: int = 20) -> dict 
 
 
 def finalize_receipt(db: sqlite3.Connection, receipt_id: int, parsed: dict) -> None:
+    fiscal_status = parsed.get("fiscal_status")
+    fiscal_differences = parsed.get("fiscal_differences")
     db.execute(
         """
         UPDATE receipts SET
@@ -86,7 +88,9 @@ def finalize_receipt(db: sqlite3.Connection, receipt_id: int, parsed: dict) -> N
             purchased_at = ?, reported_item_count = ?, subtotal = ?,
             discount_total = ?, total_paid = ?, payment_method = ?, raw_text = ?,
             ocr_method = ?, ocr_warnings = ?, status = 'draft',
-            processing_error = NULL, updated_at = CURRENT_TIMESTAMP
+            processing_error = NULL, fiscal_status = ?, fiscal_differences = ?,
+            fiscal_checked_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (
@@ -106,6 +110,11 @@ def finalize_receipt(db: sqlite3.Connection, receipt_id: int, parsed: dict) -> N
             parsed.get("raw_text"),
             parsed.get("ocr_method"),
             json.dumps(parsed.get("ocr_warnings", []), ensure_ascii=False),
+            fiscal_status,
+            json.dumps(fiscal_differences, ensure_ascii=False)
+            if fiscal_differences is not None
+            else None,
+            fiscal_status,
             receipt_id,
         ),
     )

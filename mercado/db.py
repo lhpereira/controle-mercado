@@ -34,6 +34,9 @@ def init_db() -> None:
             "ocr_mode": "TEXT",
             "processing_started_at": "TEXT",
             "processing_error": "TEXT",
+            "fiscal_status": "TEXT",
+            "fiscal_differences": "TEXT",
+            "fiscal_checked_at": "TEXT",
         },
         "products": {
             "merchant_cnpj": "TEXT NOT NULL DEFAULT ''",

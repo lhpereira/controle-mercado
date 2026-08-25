@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from .fiscal_compare import compare_with_fiscal
 from .parser import parse_receipt_text
 
 
@@ -57,4 +58,30 @@ def fetch_nfce(url: str, allowed_hosts: list[str]) -> dict:
     result["raw_text"] = text
     result["qr_url"] = current
     return result
+
+
+def check_fiscal_data(parsed: dict, allowed_hosts: list[str]) -> dict:
+    """Busca a NFC-e do QR Code lido e compara com os dados extraídos.
+
+    Não propaga erros: uma falha na consulta (portal indisponível, CAPTCHA,
+    domínio fora da lista permitida) não deve derrubar o processamento do
+    cupom, apenas deixar a comparação marcada como indisponível.
+    """
+
+    qr_url = parsed.get("qr_url")
+    if not qr_url:
+        return {"fiscal_status": None, "fiscal_differences": None}
+    try:
+        fiscal = fetch_nfce(qr_url, allowed_hosts)
+    except (UnsafeReceiptURL, requests.RequestException, ValueError, OSError) as error:
+        return {
+            "fiscal_status": "unavailable",
+            "fiscal_differences": None,
+            "fiscal_warning": f"Não foi possível comparar com a NFC-e: {error}",
+        }
+    differences = compare_with_fiscal(parsed, fiscal)
+    return {
+        "fiscal_status": "diverging" if differences else "matched",
+        "fiscal_differences": differences,
+    }
 
