@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 
 
-def analytics_rows(db, args) -> list[dict]:
-    clauses = ["r.status = 'confirmed'"]
-    params: list[str] = []
+def analytics_rows(db, args, user_id: int) -> list[dict]:
+    clauses = ["r.status = 'confirmed'", "r.user_id = ?"]
+    params: list = [user_id]
     if args.get("start"):
         clauses.append("date(r.purchased_at) >= date(?)")
         params.append(args["start"])
@@ -51,16 +51,17 @@ def analytics_rows(db, args) -> list[dict]:
     return rows
 
 
-def filter_options(db) -> dict:
+def filter_options(db, user_id: int) -> dict:
     stores = [
         dict(row)
         for row in db.execute(
             """
             SELECT DISTINCT merchant_cnpj AS cnpj, merchant_name AS name
             FROM receipts
-            WHERE status = 'confirmed'
+            WHERE status = 'confirmed' AND user_id = ?
             ORDER BY merchant_name, merchant_cnpj
-            """
+            """,
+            (user_id,),
         ).fetchall()
     ]
     categories = [
@@ -71,16 +72,18 @@ def filter_options(db) -> dict:
             FROM receipt_items i
             JOIN receipts r ON r.id = i.receipt_id
             LEFT JOIN products p ON p.id = i.product_id
-            WHERE r.status = 'confirmed'
+            WHERE r.status = 'confirmed' AND r.user_id = ?
             ORDER BY 1
-            """
+            """,
+            (user_id,),
         ).fetchall()
     ]
     bounds = db.execute(
         """
         SELECT MIN(date(purchased_at)) AS start, MAX(date(purchased_at)) AS end
-        FROM receipts WHERE status = 'confirmed'
-        """
+        FROM receipts WHERE status = 'confirmed' AND user_id = ?
+        """,
+        (user_id,),
     ).fetchone()
     return {"stores": stores, "categories": categories, "start": bounds["start"], "end": bounds["end"]}
 

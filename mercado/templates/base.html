@@ -14,10 +14,19 @@
       <span><strong>Controle Mercado</strong><small>Compras inteligentes</small></span>
     </a>
     <nav>
+      {% if g.user %}
       <a href="{{ url_for('main.dashboard') }}">Painel</a>
       <a href="{{ url_for('main.receipts') }}">Cupons</a>
       <a href="{{ url_for('main.products') }}">Produtos</a>
       <a class="primary-link" href="{{ url_for('main.new_receipt') }}">+ Novo cupom</a>
+      <span class="nav-user">{{ g.user.username }}</span>
+      <form method="post" action="{{ url_for('auth.logout') }}" style="display:inline">
+        <button class="button ghost" type="submit">Sair</button>
+      </form>
+      {% else %}
+      <a href="{{ url_for('auth.login') }}">Entrar</a>
+      <a class="primary-link" href="{{ url_for('auth.register') }}">Criar conta</a>
+      {% endif %}
     </nav>
   </header>
   <main class="page">

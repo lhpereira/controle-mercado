@@ -28,6 +28,7 @@ def init_db() -> None:
         db.executescript(schema.read().decode("utf-8"))
     migrations = {
         "receipts": {
+            "user_id": "INTEGER",
             "ocr_method": "TEXT",
             "ocr_warnings": "TEXT",
             "submission_id": "TEXT",
@@ -68,6 +69,7 @@ def init_db() -> None:
         WHERE submission_id IS NOT NULL AND submission_id <> ''
         """
     )
+    db.execute("CREATE INDEX IF NOT EXISTS idx_receipts_user ON receipts(user_id)")
     db.commit()
 
 

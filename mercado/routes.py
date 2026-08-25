@@ -9,6 +9,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    g,
     jsonify,
     make_response,
     redirect,
@@ -19,6 +20,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
+from .auth import login_required
 from .categories import CATEGORIES, infer_category
 from .db import get_db
 from .services.analytics import analytics_rows, filter_options
@@ -37,7 +39,9 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "tif", "tiff"}
 
 
 def get_receipt(receipt_id: int):
-    receipt = get_db().execute("SELECT * FROM receipts WHERE id = ?", (receipt_id,)).fetchone()
+    receipt = get_db().execute(
+        "SELECT * FROM receipts WHERE id = ? AND user_id = ?", (receipt_id, g.user["id"])
+    ).fetchone()
     if receipt is None:
         abort(404)
     return receipt
@@ -48,13 +52,14 @@ def save_parsed_receipt(parsed: dict, source_type: str, image_path: str | None =
     cursor = db.execute(
         """
         INSERT INTO receipts (
-            source_type, image_path, qr_url, access_key, receipt_number, series,
+            user_id, source_type, image_path, qr_url, access_key, receipt_number, series,
             merchant_name, merchant_cnpj, merchant_address, purchased_at,
             reported_item_count, subtotal, discount_total, total_paid,
             payment_method, raw_text, ocr_method, ocr_warnings, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
         """,
         (
+            g.user["id"],
             source_type,
             image_path,
             parsed.get("qr_url"),
@@ -134,26 +139,31 @@ def product_scope(code: str, merchant_cnpj: str | None) -> str:
 
 
 @bp.route("/")
+@login_required
 def dashboard():
-    options = filter_options(get_db())
+    options = filter_options(get_db(), g.user["id"])
     return render_template("dashboard.html", options=options)
 
 
 @bp.route("/receipts")
+@login_required
 def receipts():
     rows = get_db().execute(
         """
         SELECT r.*, COUNT(i.id) AS item_rows
         FROM receipts r
         LEFT JOIN receipt_items i ON i.receipt_id = r.id
+        WHERE r.user_id = ?
         GROUP BY r.id
         ORDER BY COALESCE(r.purchased_at, r.created_at) DESC
-        """
+        """,
+        (g.user["id"],),
     ).fetchall()
     return render_template("receipts.html", receipts=rows)
 
 
 @bp.route("/receipts/new")
+@login_required
 def new_receipt():
     return render_template(
         "receipt_form.html",
@@ -164,6 +174,7 @@ def new_receipt():
 
 
 @bp.post("/receipts/process")
+@login_required
 def process_receipt():
     upload = request.files.get("receipt_image")
     receipt_url = request.form.get("receipt_url", "").strip()
@@ -174,7 +185,8 @@ def process_receipt():
             except ValueError:
                 submission_id = str(uuid.uuid4())
             existing = get_db().execute(
-                "SELECT id FROM receipts WHERE submission_id = ?", (submission_id,)
+                "SELECT id FROM receipts WHERE submission_id = ? AND user_id = ?",
+                (submission_id, g.user["id"]),
             ).fetchone()
             if existing:
                 return redirect(
@@ -188,7 +200,7 @@ def process_receipt():
             upload.save(destination)
             ocr_mode = request.form.get("ocr_mode") or current_app.config["OCR_PROVIDER"]
             receipt_id, created = enqueue_image_receipt(
-                get_db(), submission_id, name, ocr_mode
+                get_db(), g.user["id"], submission_id, name, ocr_mode
             )
             if not created:
                 remove_orphan_upload(current_app.config["UPLOAD_FOLDER"], name)
@@ -212,6 +224,7 @@ def process_receipt():
 
 
 @bp.route("/receipts/<int:receipt_id>/review")
+@login_required
 def review_receipt(receipt_id: int):
     receipt = get_receipt(receipt_id)
     if receipt["status"] in {"queued", "processing", "failed"}:
@@ -249,6 +262,7 @@ def review_receipt(receipt_id: int):
 
 
 @bp.route("/receipts/<int:receipt_id>/processing")
+@login_required
 def processing_receipt(receipt_id: int):
     receipt = get_receipt(receipt_id)
     if receipt["status"] in {"draft", "confirmed"}:
@@ -259,6 +273,7 @@ def processing_receipt(receipt_id: int):
 
 
 @bp.route("/api/receipts/<int:receipt_id>/status")
+@login_required
 def receipt_processing_status(receipt_id: int):
     receipt = get_receipt(receipt_id)
     result = {
@@ -273,6 +288,7 @@ def receipt_processing_status(receipt_id: int):
 
 
 @bp.post("/receipts/<int:receipt_id>/retry")
+@login_required
 def retry_processing_receipt(receipt_id: int):
     get_receipt(receipt_id)
     if retry_receipt(get_db(), receipt_id):
@@ -281,6 +297,7 @@ def retry_processing_receipt(receipt_id: int):
 
 
 @bp.post("/receipts/<int:receipt_id>/reprocess")
+@login_required
 def reprocess_receipt_route(receipt_id: int):
     get_receipt(receipt_id)
     ocr_mode = request.form.get("ocr_mode") or current_app.config["OCR_PROVIDER"]
@@ -295,6 +312,7 @@ def reprocess_receipt_route(receipt_id: int):
 
 
 @bp.post("/receipts/<int:receipt_id>/verify-fiscal")
+@login_required
 def verify_fiscal_data(receipt_id: int):
     receipt = get_receipt(receipt_id)
     if not receipt["qr_url"]:
@@ -344,6 +362,7 @@ def verify_fiscal_data(receipt_id: int):
 
 
 @bp.post("/receipts/<int:receipt_id>/save")
+@login_required
 def save_receipt(receipt_id: int):
     get_receipt(receipt_id)
     db = get_db()
@@ -455,6 +474,7 @@ def save_receipt(receipt_id: int):
 
 
 @bp.post("/receipts/<int:receipt_id>/delete")
+@login_required
 def delete_receipt(receipt_id: int):
     receipt = get_receipt(receipt_id)
     if receipt["image_path"]:
@@ -469,6 +489,7 @@ def delete_receipt(receipt_id: int):
 
 
 @bp.route("/receipts/<int:receipt_id>/image")
+@login_required
 def receipt_image(receipt_id: int):
     receipt = get_receipt(receipt_id)
     if not receipt["image_path"]:
@@ -477,6 +498,7 @@ def receipt_image(receipt_id: int):
 
 
 @bp.route("/products")
+@login_required
 def products():
     rows = get_db().execute(
         """
@@ -491,6 +513,7 @@ def products():
 
 
 @bp.post("/products/<int:product_id>")
+@login_required
 def update_product(product_id: int):
     db = get_db()
     if not db.execute("SELECT id FROM products WHERE id = ?", (product_id,)).fetchone():
@@ -520,8 +543,9 @@ def update_product(product_id: int):
 
 
 @bp.route("/api/analytics")
+@login_required
 def api_analytics():
-    return jsonify({"rows": analytics_rows(get_db(), request.args)})
+    return jsonify({"rows": analytics_rows(get_db(), request.args, g.user["id"])})
 
 
 @bp.route("/api/health")
@@ -530,6 +554,7 @@ def health():
 
 
 @bp.post("/admin/seed")
+@login_required
 def seed():
     seed_path = Path(current_app.root_path).parent / "data" / "seed_compras.json"
     imported = seed_legacy_data(get_db(), seed_path)

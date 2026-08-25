@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Entrar · Controle Mercado{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <section class="card">
+    <div class="card-head"><div><h2>Entrar</h2><div class="subtitle">Acesse seus cupons e seu painel</div></div></div>
+    <form method="post">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="form-grid">
+        <div class="field full"><label for="username">Usuário</label><input id="username" name="username" autocomplete="username" required autofocus></div>
+        <div class="field full"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+      </div>
+      <div class="actions" style="justify-content:flex-start">
+        <button class="button" type="submit">Entrar</button>
+        <a class="button ghost" href="{{ url_for('auth.register') }}">Criar conta</a>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}
