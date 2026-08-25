@@ -15,8 +15,12 @@ A entrada principal é uma fotografia do cupom. A aplicação combina OCR local,
 - modo híbrido que envia à LLM somente as linhas duvidosas;
 - leitura do QR Code e armazenamento da URL da NFC-e;
 - revisão manual antes da confirmação da compra;
+- reprocessamento de um rascunho com outro motor de leitura, sem reenviar a imagem;
+- comparação automática entre os dados extraídos e a NFC-e oficial, quando a consulta fiscal está habilitada;
 - catálogo de produtos com nomes e categorias reaproveitados;
 - painel com filtros, indicadores, gráficos e histórico de preços;
+- login com conta própria: cada usuário só vê seus cupons, painel e histórico; o catálogo de produtos é compartilhado;
+- exportação dos dados do usuário em JSON (backup completo) ou CSV;
 - prevenção de recibos duplicados quando o navegador reenvia o formulário;
 - retomada de tarefas interrompidas e nova tentativa em caso de falha.
 
@@ -261,9 +265,13 @@ Isso evita colisões entre códigos internos de mercados diferentes. Depois que 
 
 ## Modelo de dados
 
+### `users`
+
+Uma linha por conta. Contém usuário, hash da senha e data de criação. Cada `receipts.user_id` referencia o dono do cupom.
+
 ### `receipts`
 
-Uma linha por cupom. Contém origem, imagem, estabelecimento, CNPJ, data, totais, pagamento, QR Code, método de OCR, avisos, estado da fila e a chave idempotente do envio.
+Uma linha por cupom. Contém dono (`user_id`), origem, imagem, estabelecimento, CNPJ, data, totais, pagamento, QR Code, método e modo de OCR, avisos, estado da fila, a chave idempotente do envio e o resultado da comparação com a NFC-e (`fiscal_status`, `fiscal_differences`, `fiscal_checked_at`).
 
 ### `receipt_items`
 
@@ -277,11 +285,20 @@ Catálogo reutilizável com nome canônico, marca, categoria, subcategoria, dado
 
 ```mermaid
 erDiagram
+    USERS ||--o{ RECEIPTS : "possui"
     RECEIPTS ||--o{ RECEIPT_ITEMS : "contém"
     PRODUCTS o|--o{ RECEIPT_ITEMS : "classifica"
 
+    USERS {
+        INTEGER id PK
+        TEXT username UK
+        TEXT password_hash
+        TEXT created_at
+    }
+
     RECEIPTS {
         INTEGER id PK
+        INTEGER user_id FK
         TEXT source_type
         TEXT image_path
         TEXT qr_url
@@ -304,6 +321,9 @@ erDiagram
         TEXT ocr_mode
         TEXT processing_started_at
         TEXT processing_error
+        TEXT fiscal_status
+        TEXT fiscal_differences
+        TEXT fiscal_checked_at
         TEXT status
         TEXT created_at
         TEXT updated_at
@@ -348,19 +368,21 @@ erDiagram
 
 Regras de integridade e índices:
 
+- `receipts.user_id` referencia `users.id`; ao excluir um usuário, seus cupons são removidos por `ON DELETE CASCADE`;
 - `receipt_items.receipt_id` é obrigatório e referencia `receipts.id`;
 - ao excluir um recibo, seus itens são removidos por `ON DELETE CASCADE`;
 - `receipt_items.product_id` é opcional e referencia `products.id`;
 - ao excluir um produto, o item histórico é preservado e `product_id` recebe `NULL` por `ON DELETE SET NULL`;
+- `users.username` é único;
 - `receipts.submission_id` possui índice único quando preenchido, garantindo idempotência do upload;
 - o par `products.merchant_cnpj + products.barcode` é único quando o código está preenchido;
-- existem índices para data e CNPJ do recibo e para as duas chaves estrangeiras dos itens.
+- existem índices para data e CNPJ do recibo, para o dono do recibo (`user_id`) e para as duas chaves estrangeiras dos itens.
 
 As migrações necessárias são aplicadas automaticamente na inicialização. O banco e as imagens ficam no volume Docker `mercado_data`, montado em `/data`.
 
 ## Dados iniciais
 
-Na primeira execução, a aplicação importa automaticamente `data/seed_compras.json` quando o banco está vazio. A importação é idempotente e não é repetida em um banco já preenchido.
+Na primeira execução, a aplicação importa automaticamente `data/seed_compras.json` quando o banco está vazio. A importação é idempotente e não é repetida em um banco já preenchido. Como ainda não existe usuário nesse momento, esses cupons ficam sem dono até a primeira conta ser criada — veja [Autenticação](#autenticação).
 
 ## Estrutura do projeto
 
