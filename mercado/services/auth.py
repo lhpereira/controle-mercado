@@ -36,6 +36,7 @@ def create_user(db: sqlite3.Connection, username: str, password: str) -> int:
     user_id = int(cursor.lastrowid)
     if is_first_user:
         db.execute("UPDATE receipts SET user_id = ? WHERE user_id IS NULL", (user_id,))
+        db.execute("UPDATE products SET user_id = ? WHERE user_id IS NULL", (user_id,))
     db.commit()
     return user_id
 

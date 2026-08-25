@@ -44,7 +44,7 @@ def process_one(app) -> bool:
             if fiscal_result.get("fiscal_warning"):
                 parsed["ocr_warnings"].append(fiscal_result["fiscal_warning"])
         with app.app_context():
-            enrich_items_from_catalog(parsed)
+            enrich_items_from_catalog(parsed, int(job["user_id"]))
             finalize_receipt(get_db(), receipt_id, parsed)
         LOGGER.info("Recibo %s processado", receipt_id)
     except Exception as error:  # o worker precisa persistir qualquer falha e continuar
