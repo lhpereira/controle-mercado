@@ -166,6 +166,21 @@ def retry_receipt(db: sqlite3.Connection, receipt_id: int) -> bool:
     return updated.rowcount == 1
 
 
+def reprocess_receipt(db: sqlite3.Connection, receipt_id: int, ocr_mode: str) -> bool:
+    updated = db.execute(
+        """
+        UPDATE receipts
+        SET status = 'queued', ocr_mode = ?, processing_started_at = NULL,
+            processing_error = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('draft', 'confirmed')
+          AND source_type = 'imagem' AND image_path IS NOT NULL
+        """,
+        (ocr_mode, receipt_id),
+    )
+    db.commit()
+    return updated.rowcount == 1
+
+
 def remove_orphan_upload(upload_folder: str | Path, image_name: str) -> None:
     path = (Path(upload_folder) / image_name).resolve()
     root = Path(upload_folder).resolve()

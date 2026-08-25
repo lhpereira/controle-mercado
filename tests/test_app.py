@@ -205,6 +205,52 @@ class AppTest(unittest.TestCase):
         status = self.client.get(f"/api/receipts/{receipt_id}/status").json
         self.assertEqual(status["status"], "queued")
 
+    @patch("mercado.worker.process_image")
+    def test_draft_receipt_can_be_reprocessed_with_another_engine(self, process_image):
+        process_image.return_value = {
+            "merchant_name": "Mercado Teste",
+            "ocr_method": "rapidocr",
+            "ocr_warnings": [],
+            "items": [],
+        }
+        submission_id = str(uuid.uuid4())
+        response = self.client.post(
+            "/receipts/process",
+            data={
+                "submission_id": submission_id,
+                "ocr_mode": "rapidocr",
+                "receipt_image": (io.BytesIO(b"fake-image"), "cupom.jpg"),
+            },
+            content_type="multipart/form-data",
+        )
+        receipt_id = int(response.headers["Location"].split("/")[-2])
+        self.assertTrue(process_one(self.app))
+        status = self.client.get(f"/api/receipts/{receipt_id}/status").json
+        self.assertEqual(status["status"], "draft")
+
+        review = self.client.get(status["redirect_url"])
+        self.assertIn(b"Reprocessar com outro motor", review.data)
+
+        reprocess = self.client.post(
+            f"/receipts/{receipt_id}/reprocess", data={"ocr_mode": "openai"}
+        )
+        self.assertEqual(reprocess.status_code, 302)
+        self.assertIn("/processing", reprocess.headers["Location"])
+        status = self.client.get(f"/api/receipts/{receipt_id}/status").json
+        self.assertEqual(status["status"], "queued")
+        with self.app.app_context():
+            db = get_db()
+            ocr_mode = db.execute(
+                "SELECT ocr_mode FROM receipts WHERE id = ?", (receipt_id,)
+            ).fetchone()["ocr_mode"]
+        self.assertEqual(ocr_mode, "openai")
+
+        invalid = self.client.post(
+            f"/receipts/{receipt_id}/reprocess", data={"ocr_mode": "not-a-real-engine"}
+        )
+        self.assertEqual(invalid.status_code, 302)
+        self.assertIn("/review", invalid.headers["Location"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,7 @@ from .services.parser import decimal_br
 from .services.receipt_jobs import (
     enqueue_image_receipt,
     remove_orphan_upload,
+    reprocess_receipt,
     retry_receipt,
 )
 from .services.seed import seed_legacy_data
@@ -237,6 +238,7 @@ def review_receipt(receipt_id: int):
         categories=CATEGORIES,
         ocr_stats=ocr_stats,
         ocr_warnings=ocr_warnings,
+        llm_provider=current_app.config["LLM_PROVIDER"],
     )
 
 
@@ -270,6 +272,20 @@ def retry_processing_receipt(receipt_id: int):
     if retry_receipt(get_db(), receipt_id):
         flash("Processamento colocado novamente na fila.", "success")
     return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
+
+
+@bp.post("/receipts/<int:receipt_id>/reprocess")
+def reprocess_receipt_route(receipt_id: int):
+    get_receipt(receipt_id)
+    ocr_mode = request.form.get("ocr_mode") or current_app.config["OCR_PROVIDER"]
+    if ocr_mode not in {"hybrid", "rapidocr", "openai", "ollama"}:
+        flash("Motor de leitura inválido.", "error")
+        return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
+    if reprocess_receipt(get_db(), receipt_id, ocr_mode):
+        flash("Cupom enviado para reprocessamento com outro motor.", "success")
+        return redirect(url_for("main.processing_receipt", receipt_id=receipt_id))
+    flash("Não foi possível reprocessar este cupom.", "error")
+    return redirect(url_for("main.review_receipt", receipt_id=receipt_id))
 
 
 @bp.post("/receipts/<int:receipt_id>/save")
